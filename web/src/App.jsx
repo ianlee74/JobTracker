@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchJobs, fetchStats, addJob, updateJob, deleteJob } from './api.js';
-import { STATUSES, STATUS_COLORS } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm from './AddJobForm.jsx';
 
@@ -25,13 +25,23 @@ const COMPARATORS = {
   company: (a, b) => a.company.localeCompare(b.company),
   category: (a, b) => (a.category || '').localeCompare(b.category || ''),
   salary: (a, b) => salaryValue(a.salary) - salaryValue(b.salary),
-  status: (a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status)
+  status: (a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status),
+  level: (a, b) => {
+    const ia = LEVELS.indexOf(a.level);
+    const ib = LEVELS.indexOf(b.level);
+    // Known levels in ladder order; unknown custom values after, alphabetically.
+    if (ia === -1 && ib === -1) return (a.level || '').localeCompare(b.level || '');
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  }
 };
 
 export default function App() {
   const [jobs, setJobs] = useState([]);
   const [stats, setStats] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
+  const [levelFilter, setLevelFilter] = useState('');
   const [textFilter, setTextFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('any'); // any | today | 7d | 30d | day
   const [customDate, setCustomDate] = useState(todayStr());
@@ -111,6 +121,7 @@ export default function App() {
 
     const filtered = jobs.filter(job => {
       if (statusFilter && job.status !== statusFilter) return false;
+      if (levelFilter && job.level !== levelFilter) return false;
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
@@ -125,9 +136,15 @@ export default function App() {
       // Stable, sensible tie-break: newest first, then company.
       return result || b.date_found.localeCompare(a.date_found) || a.company.localeCompare(b.company);
     });
-  }, [jobs, statusFilter, textFilter, dateFilter, customDate, sort]);
+  }, [jobs, statusFilter, levelFilter, textFilter, dateFilter, customDate, sort]);
 
-  const filtersActive = statusFilter || textFilter || dateFilter !== 'any';
+  // Ladder-ordered levels present in the data, plus any custom values.
+  const levelOptions = useMemo(() => {
+    const present = new Set(jobs.map(j => j.level).filter(Boolean));
+    return [...LEVELS.filter(l => present.has(l)), ...[...present].filter(l => !LEVELS.includes(l)).sort()];
+  }, [jobs]);
+
+  const filtersActive = statusFilter || levelFilter || textFilter || dateFilter !== 'any';
 
   return (
     <div className="app">
@@ -168,6 +185,10 @@ export default function App() {
           <option value="">All statuses</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} title="Filter by seniority level">
+          <option value="">All levels</option>
+          {levelOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
         <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} title="Filter by date found">
           <option value="any">Found: any time</option>
           <option value="today">Found today</option>
@@ -187,7 +208,7 @@ export default function App() {
         {filtersActive && (
           <button
             className="clear-btn"
-            onClick={() => { setStatusFilter(''); setTextFilter(''); setDateFilter('any'); }}
+            onClick={() => { setStatusFilter(''); setLevelFilter(''); setTextFilter(''); setDateFilter('any'); }}
           >
             Clear filters
           </button>

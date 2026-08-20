@@ -2,7 +2,7 @@ import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, STATUSES, DB_PATH } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, STATUSES, LEVELS, DB_PATH } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'dist');
@@ -43,6 +43,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, listJobs({
       status: p.get('status') || undefined,
       company: p.get('company') || undefined,
+      level: p.get('level') || undefined,
       q: p.get('q') || undefined,
       since: p.get('since') || undefined,
       limit: p.get('limit') ? Number(p.get('limit')) : undefined
@@ -50,7 +51,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/stats') {
-    return json(res, 200, { ...getStats(), statuses: STATUSES });
+    return json(res, 200, { ...getStats(), statuses: STATUSES, levels: LEVELS });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/jobs') {

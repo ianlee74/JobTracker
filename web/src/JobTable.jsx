@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { STATUSES, STATUS_COLORS } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 
 function NoteInput({ job, onUpdate }) {
   const [value, setValue] = useState(job.note || '');
@@ -55,6 +55,18 @@ function JobRow({ job, onUpdate, onDelete }) {
       <td>{job.company}</td>
       <td>{job.category}</td>
       <td>
+        <select
+          className="level-select"
+          value={job.level || ''}
+          onChange={e => onUpdate(job.id, { level: e.target.value })}
+          title="Seniority level (auto-classified from the title; change if wrong)"
+        >
+          {job.level && !LEVELS.includes(job.level) && <option value={job.level}>{job.level}</option>}
+          {!job.level && <option value="">—</option>}
+          {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+      </td>
+      <td>
         {job.salary}
         {salaryFlagged && <span className="flag-badge" title="Salary not disclosed / inferred">?</span>}
       </td>
@@ -104,12 +116,13 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete }) {
         <thead>
           <tr>
             <SortableHeader label="Found" sortKey="date_found" sort={sort} onSort={onSort} width="8%" />
-            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width="26%" />
-            <SortableHeader label="Company" sortKey="company" sort={sort} onSort={onSort} width="13%" />
-            <SortableHeader label="Category" sortKey="category" sort={sort} onSort={onSort} width="13%" />
-            <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width="12%" />
+            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width="23%" />
+            <SortableHeader label="Company" sortKey="company" sort={sort} onSort={onSort} width="11%" />
+            <SortableHeader label="Category" sortKey="category" sort={sort} onSort={onSort} width="11%" />
+            <SortableHeader label="Level" sortKey="level" sort={sort} onSort={onSort} width="9%" />
+            <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width="11%" />
             <SortableHeader label="Status" sortKey="status" sort={sort} onSort={onSort} width="10%" />
-            <th style={{ width: '15%' }}>Note</th>
+            <th style={{ width: '14%' }}>Note</th>
             <th style={{ width: '3%' }}></th>
           </tr>
         </thead>

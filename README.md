@@ -62,6 +62,8 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 
 Statuses: `new`, `Interested`, `Applied`, `Interviewing`, `Offer`, `Not Moving Forward`.
 
+Every job also has a seniority **level** used for grouping and filtering: `Senior`, `Staff`, `Principal`, `Lead`, `Manager`, `Senior Manager`, `Director`, `Senior Director`, `VP`, `Executive`, or `Other`. `add_jobs` accepts an optional `level`; when omitted, the level is classified automatically from the job title (e.g. "Sr. Engineering Manager, Platform" → `Senior Manager`). Misclassifications can be corrected inline in the UI's Level column or via `update_job`.
+
 ## Importing old daily tracker files
 
 Each daily HTML file the Cowork job produced embeds its job data. Import one file or a whole folder:
@@ -77,7 +79,7 @@ Already-imported jobs (same URL) are skipped, so re-running is safe.
 
 The web server also exposes the data at `http://localhost:7080/api`:
 
-- `GET /api/jobs` — query params: `status`, `company`, `q`, `since`, `limit`
+- `GET /api/jobs` — query params: `status`, `company`, `level`, `q`, `since`, `limit`
 - `POST /api/jobs` — body: job object or array (requires `title`, `company`, `url`)
 - `GET /api/jobs/:id`, `PATCH /api/jobs/:id`, `DELETE /api/jobs/:id`
 - `GET /api/stats`

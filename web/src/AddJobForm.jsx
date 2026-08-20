@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { STATUSES } from './constants.js';
+import { STATUSES, LEVELS } from './constants.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -9,6 +9,7 @@ const EMPTY = {
   url: '',
   date_found: today(),
   category: '',
+  level: '',
   salary: '',
   salary_uncertain: false,
   fit: '',
@@ -37,9 +38,11 @@ export default function AddJobForm({ jobs, onAdd }) {
     setSaving(true);
     setError(null);
     try {
-      const { salary_uncertain, ...rest } = form;
+      const { salary_uncertain, level, ...rest } = form;
       await onAdd({
         ...rest,
+        // Omit an empty level so the server auto-classifies it from the title.
+        ...(level ? { level } : {}),
         date_found: form.date_found || today(),
         salary_confidence: salary_uncertain ? 'flag' : 'ok'
       });
@@ -87,6 +90,13 @@ export default function AddJobForm({ jobs, onAdd }) {
           <datalist id="category-options">
             {categories.map(c => <option key={c} value={c} />)}
           </datalist>
+        </label>
+        <label>
+          Level
+          <select value={form.level} onChange={set('level')}>
+            <option value="">Auto-detect from title</option>
+            {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
         </label>
         <label>
           Salary

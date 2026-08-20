@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, STATUSES } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, STATUSES, LEVELS } from './db.js';
 
 const server = new McpServer({
   name: 'jobtracker',
@@ -19,6 +19,7 @@ const jobInput = {
   salary: z.string().optional().describe('Salary description, e.g. "$200,000 - $225,000"'),
   salary_confidence: z.enum(['ok', 'flag']).optional().describe('"flag" if salary is undisclosed/inferred/uncertain'),
   fit: z.string().optional().describe('Why this job fits the candidate'),
+  level: z.string().optional().describe(`Seniority level, ideally one of: ${LEVELS.join(', ')}. If omitted it is classified automatically from the job title.`),
   status: statusEnum.optional().describe('Initial status (defaults to "new")'),
   note: z.string().optional().describe('Free-form note')
 };
@@ -33,6 +34,7 @@ server.registerTool('list_jobs', {
   inputSchema: {
     status: statusEnum.optional().describe('Filter to one status'),
     company: z.string().optional().describe('Filter by company name (substring match)'),
+    level: z.string().optional().describe(`Filter by seniority level (exact match), e.g. ${LEVELS.slice(0, 4).join(', ')}`),
     q: z.string().optional().describe('Free-text search across title, company, category, fit, note, and salary'),
     since: z.string().optional().describe('Only jobs found on/after this date (YYYY-MM-DD)'),
     limit: z.number().int().positive().optional().describe('Max rows to return')
@@ -78,6 +80,7 @@ server.registerTool('update_job', {
     salary: z.string().optional(),
     salary_confidence: z.enum(['ok', 'flag']).optional(),
     fit: z.string().optional(),
+    level: z.string().optional().describe(`Seniority level, ideally one of: ${LEVELS.join(', ')}`),
     date_found: z.string().optional()
   }
 }, async ({ id, url, append_note, ...fields }) => {

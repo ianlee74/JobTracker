@@ -266,6 +266,17 @@ tr:last-child td { border-bottom: none; }
   font-family: inherit;
 }
 
+.level-select {
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  max-width: 100%;
+}
+
 .note-input {
   width: 100%;
   min-width: 160px;
