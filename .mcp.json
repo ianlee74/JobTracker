@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jobtracker": {
+      "command": "node",
+      "args": ["server/mcp-server.js"]
+    }
+  }
+}

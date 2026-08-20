@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jobtracker",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/http-server.js"],
+      "port": 7080
+    }
+  ]
+}

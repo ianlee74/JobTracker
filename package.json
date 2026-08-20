@@ -1,0 +1,24 @@
+{
+  "name": "jobtracker",
+  "version": "1.0.0",
+  "description": "Local job-search tracker with a React UI and an MCP server for Claude",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/http-server.js",
+    "dev": "vite",
+    "build": "vite build",
+    "mcp": "node server/mcp-server.js",
+    "import": "node scripts/import-html.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^6.0.0"
+  }
+}
