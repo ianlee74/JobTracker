@@ -12,6 +12,8 @@ async function request(url, options = {}) {
 
 export const fetchJobs = () => request('/api/jobs');
 export const fetchStats = () => request('/api/stats');
+export const addJob = (job) =>
+  request('/api/jobs', { method: 'POST', body: JSON.stringify(job) });
 export const updateJob = (id, fields) =>
   request(`/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
 export const deleteJob = (id) =>

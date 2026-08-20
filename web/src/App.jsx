@@ -1,13 +1,41 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchJobs, fetchStats, updateJob, deleteJob } from './api.js';
+import { fetchJobs, fetchStats, addJob, updateJob, deleteJob } from './api.js';
 import { STATUSES, STATUS_COLORS } from './constants.js';
 import JobTable from './JobTable.jsx';
+import AddJobForm from './AddJobForm.jsx';
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+function daysAgoStr(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Best-effort numeric value for sorting salary strings like "$275,000 - $375,000".
+function salaryValue(salary) {
+  const nums = (salary || '').match(/\$[\d,]+/g);
+  if (!nums) return -1;
+  return Math.max(...nums.map(n => Number(n.replace(/[$,]/g, ''))));
+}
+
+const COMPARATORS = {
+  date_found: (a, b) => a.date_found.localeCompare(b.date_found),
+  title: (a, b) => a.title.localeCompare(b.title),
+  company: (a, b) => a.company.localeCompare(b.company),
+  category: (a, b) => (a.category || '').localeCompare(b.category || ''),
+  salary: (a, b) => salaryValue(a.salary) - salaryValue(b.salary),
+  status: (a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status)
+};
 
 export default function App() {
   const [jobs, setJobs] = useState([]);
   const [stats, setStats] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [textFilter, setTextFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState('any'); // any | today | 7d | 30d | day
+  const [customDate, setCustomDate] = useState(todayStr());
+  const [sort, setSort] = useState({ key: 'date_found', dir: 'desc' });
   const [error, setError] = useState(null);
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -34,6 +62,15 @@ export default function App() {
     setTimeout(() => setSavedFlash(false), 1200);
   };
 
+  const handleAdd = async (job) => {
+    const result = await addJob(job);
+    if (result.added === 0) {
+      throw new Error('That posting URL is already tracked.');
+    }
+    await refresh();
+    flashSaved();
+  };
+
   const handleUpdate = async (id, fields) => {
     try {
       const updated = await updateJob(id, fields);
@@ -56,15 +93,41 @@ export default function App() {
     }
   };
 
+  const handleSort = (key) => {
+    setSort(prev =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'date_found' ? 'desc' : 'asc' }
+    );
+  };
+
   const visibleJobs = useMemo(() => {
     const text = textFilter.trim().toLowerCase();
-    return jobs.filter(job => {
+    const dateMin =
+      dateFilter === 'today' ? todayStr()
+      : dateFilter === '7d' ? daysAgoStr(7)
+      : dateFilter === '30d' ? daysAgoStr(30)
+      : null;
+
+    const filtered = jobs.filter(job => {
       if (statusFilter && job.status !== statusFilter) return false;
+      if (dateFilter === 'day' && job.date_found !== customDate) return false;
+      if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
       return [job.title, job.company, job.category, job.fit, job.note, job.salary]
         .some(v => (v || '').toLowerCase().includes(text));
     });
-  }, [jobs, statusFilter, textFilter]);
+
+    const cmp = COMPARATORS[sort.key] || COMPARATORS.date_found;
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const result = cmp(a, b) * sign;
+      // Stable, sensible tie-break: newest first, then company.
+      return result || b.date_found.localeCompare(a.date_found) || a.company.localeCompare(b.company);
+    });
+  }, [jobs, statusFilter, textFilter, dateFilter, customDate, sort]);
+
+  const filtersActive = statusFilter || textFilter || dateFilter !== 'any';
 
   return (
     <div className="app">
@@ -76,7 +139,10 @@ export default function App() {
             {stats?.lastFound ? ` · latest found: ${stats.lastFound}` : ''}
           </div>
         </div>
-        <div className={`saved-flash ${savedFlash ? 'visible' : ''}`}>✓ Saved</div>
+        <div className="header-right">
+          <div className={`saved-flash ${savedFlash ? 'visible' : ''}`}>✓ Saved</div>
+          <AddJobForm jobs={jobs} onAdd={handleAdd} />
+        </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -102,21 +168,42 @@ export default function App() {
           <option value="">All statuses</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} title="Filter by date found">
+          <option value="any">Found: any time</option>
+          <option value="today">Found today</option>
+          <option value="7d">Found in last 7 days</option>
+          <option value="30d">Found in last 30 days</option>
+          <option value="day">Found on day…</option>
+        </select>
+        {dateFilter === 'day' && (
+          <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} />
+        )}
         <input
           type="text"
           placeholder="Filter by company, title, category..."
           value={textFilter}
           onChange={e => setTextFilter(e.target.value)}
         />
-        {(statusFilter || textFilter) && (
-          <button className="clear-btn" onClick={() => { setStatusFilter(''); setTextFilter(''); }}>
+        {filtersActive && (
+          <button
+            className="clear-btn"
+            onClick={() => { setStatusFilter(''); setTextFilter(''); setDateFilter('any'); }}
+          >
             Clear filters
           </button>
         )}
-        <span className="hint">Changes save automatically.</span>
+        <span className="hint">
+          {filtersActive ? `${visibleJobs.length} of ${jobs.length} shown · ` : ''}Changes save automatically.
+        </span>
       </div>
 
-      <JobTable jobs={visibleJobs} onUpdate={handleUpdate} onDelete={handleDelete} />
+      <JobTable
+        jobs={visibleJobs}
+        sort={sort}
+        onSort={handleSort}
+        onUpdate={handleUpdate}
+        onDelete={handleDelete}
+      />
     </div>
   );
 }

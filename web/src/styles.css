@@ -120,6 +120,81 @@ h1 { font-size: 22px; margin: 0 0 4px 0; }
 
 .hint { font-size: 12px; color: var(--text-muted); }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+
+.add-job-btn, .primary-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.add-job-btn:hover, .primary-btn:hover { opacity: 0.9; }
+.primary-btn:disabled { opacity: 0.6; cursor: default; }
+
+.add-job-form {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 18px;
+  width: 100%;
+  max-width: 720px;
+}
+
+.form-title { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.form-grid .span-2 { grid-column: span 2; }
+
+.form-grid input, .form-grid select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-weight: 400;
+}
+
+.checkbox-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .table-wrap { overflow-x: auto; }
 
 table {

@@ -84,7 +84,17 @@ function JobRow({ job, onUpdate, onDelete }) {
   );
 }
 
-export default function JobTable({ jobs, onUpdate, onDelete }) {
+function SortableHeader({ label, sortKey, sort, onSort, width }) {
+  const active = sort.key === sortKey;
+  const arrow = active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  return (
+    <th style={{ width }} className="sortable" onClick={() => onSort(sortKey)} title={`Sort by ${label}`}>
+      {label}{arrow}
+    </th>
+  );
+}
+
+export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete }) {
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
   }
@@ -93,12 +103,12 @@ export default function JobTable({ jobs, onUpdate, onDelete }) {
       <table>
         <thead>
           <tr>
-            <th style={{ width: '8%' }}>Found</th>
-            <th style={{ width: '26%' }}>Title</th>
-            <th style={{ width: '13%' }}>Company</th>
-            <th style={{ width: '13%' }}>Category</th>
-            <th style={{ width: '12%' }}>Salary</th>
-            <th style={{ width: '10%' }}>Status</th>
+            <SortableHeader label="Found" sortKey="date_found" sort={sort} onSort={onSort} width="8%" />
+            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width="26%" />
+            <SortableHeader label="Company" sortKey="company" sort={sort} onSort={onSort} width="13%" />
+            <SortableHeader label="Category" sortKey="category" sort={sort} onSort={onSort} width="13%" />
+            <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width="12%" />
+            <SortableHeader label="Status" sortKey="status" sort={sort} onSort={onSort} width="10%" />
             <th style={{ width: '15%' }}>Note</th>
             <th style={{ width: '3%' }}></th>
           </tr>
