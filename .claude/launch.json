@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "jobtracker",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["server/http-server.js"],
-      "port": 7080
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 7080,
+      "autoPort": true
     }
   ]
 }

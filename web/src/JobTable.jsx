@@ -1,14 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange } from './constants.js';
 
 function NoteInput({ job, onUpdate }) {
   const [value, setValue] = useState(job.note || '');
   const timer = useRef(null);
   const latest = useRef(value);
+  const box = useRef(null);
 
+  // Sync external note changes (edit modal, MCP refresh) — but never while the
+  // user is typing here, so in-flight keystrokes aren't clobbered.
   useEffect(() => {
-    setValue(job.note || '');
-  }, [job.id]);
+    if (document.activeElement !== box.current) {
+      setValue(job.note || '');
+      latest.current = job.note || '';
+    }
+  }, [job.id, job.note]);
 
   const save = (text) => {
     if (text === job.note) return;
@@ -32,6 +38,7 @@ function NoteInput({ job, onUpdate }) {
 
   return (
     <textarea
+      ref={box}
       className="note-input"
       placeholder="Add a note..."
       value={value}
@@ -41,15 +48,78 @@ function NoteInput({ job, onUpdate }) {
   );
 }
 
-function JobRow({ job, onUpdate, onDelete }) {
+// Reason for "Not Moving Forward". Custom text is stored directly in
+// rejection_reason; the select shows it as "Other" with the text box filled in.
+function RejectionReason({ job, onUpdate }) {
+  const stored = job.rejection_reason || '';
+  const isPreset = stored !== 'Other' && REJECTION_REASONS.includes(stored);
+  const selectValue = !stored ? '' : isPreset ? stored : 'Other';
+  const [text, setText] = useState(selectValue === 'Other' && stored !== 'Other' ? stored : '');
+  const timer = useRef(null);
+  const box = useRef(null);
+
+  useEffect(() => {
+    if (document.activeElement !== box.current) {
+      setText(stored && stored !== 'Other' && !REJECTION_REASONS.includes(stored) ? stored : '');
+    }
+  }, [job.id, stored]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const saveText = (value) => {
+    const reason = value.trim() || 'Other';
+    if (reason !== stored) onUpdate(job.id, { rejection_reason: reason });
+  };
+
+  const handleTextChange = (e) => {
+    const value = e.target.value;
+    setText(value);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => saveText(value), 800);
+  };
+
+  return (
+    <div className="reason-wrap">
+      <select
+        className="reason-select"
+        value={selectValue}
+        onChange={e => {
+          setText('');
+          onUpdate(job.id, { rejection_reason: e.target.value });
+        }}
+        title="Why you're not moving forward"
+      >
+        <option value="">Why not?</option>
+        {REJECTION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+      </select>
+      {selectValue === 'Other' && (
+        <input
+          ref={box}
+          className="reason-input"
+          placeholder="Enter a reason..."
+          value={text}
+          onChange={handleTextChange}
+          onBlur={() => { clearTimeout(timer.current); saveText(text); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function JobRow({ job, onUpdate, onDelete, onEdit }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
+  const salaryRange = formatSalaryRange(job);
+  // file:// links are blocked from http pages, so serve them via the server.
+  const isLocalFile = (job.url || '').startsWith('file:');
+  const href = isLocalFile ? `/api/local-file?url=${encodeURIComponent(job.url)}` : job.url;
 
   return (
     <tr>
       <td className="cell-date">{job.date_found}</td>
       <td className="cell-title">
-        <a href={job.url} target="_blank" rel="noopener noreferrer">{job.title}</a>
+        <a href={href} target="_blank" rel="noopener noreferrer">{job.title}</a>
+        {isLocalFile && <span className="file-badge" title={`Local file: ${job.url}`}>📄</span>}
         {job.fit && <div className="fit">{job.fit}</div>}
       </td>
       <td>{job.company}</td>
@@ -67,7 +137,9 @@ function JobRow({ job, onUpdate, onDelete }) {
         </select>
       </td>
       <td>
-        {job.salary}
+        <span title={salaryRange && job.salary && job.salary !== salaryRange ? `As listed: ${job.salary}` : undefined}>
+          {salaryRange ?? job.salary}
+        </span>
         {salaryFlagged && <span className="flag-badge" title="Salary not disclosed / inferred">?</span>}
       </td>
       <td>
@@ -79,9 +151,17 @@ function JobRow({ job, onUpdate, onDelete }) {
         >
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {job.status === 'Not Moving Forward' && <RejectionReason job={job} onUpdate={onUpdate} />}
       </td>
       <td><NoteInput job={job} onUpdate={onUpdate} /></td>
       <td className="cell-actions">
+        <button
+          className="edit-btn"
+          title="Edit this job"
+          onClick={() => onEdit(job)}
+        >
+          ✎
+        </button>
         <button
           className="delete-btn"
           title="Delete this job"
@@ -106,7 +186,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit }) {
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
   }
@@ -122,13 +202,13 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete }) {
             <SortableHeader label="Level" sortKey="level" sort={sort} onSort={onSort} width="9%" />
             <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width="11%" />
             <SortableHeader label="Status" sortKey="status" sort={sort} onSort={onSort} width="10%" />
-            <th style={{ width: '14%' }}>Note</th>
-            <th style={{ width: '3%' }}></th>
+            <th style={{ width: '12%' }}>Note</th>
+            <th style={{ width: '5%' }}></th>
           </tr>
         </thead>
         <tbody>
           {jobs.map(job => (
-            <JobRow key={job.id} job={job} onUpdate={onUpdate} onDelete={onDelete} />
+            <JobRow key={job.id} job={job} onUpdate={onUpdate} onDelete={onDelete} onEdit={onEdit} />
           ))}
         </tbody>
       </table>

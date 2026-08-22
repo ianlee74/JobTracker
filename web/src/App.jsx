@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchJobs, fetchStats, addJob, updateJob, deleteJob } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 import JobTable from './JobTable.jsx';
-import AddJobForm from './AddJobForm.jsx';
+import AddJobForm, { JobForm } from './AddJobForm.jsx';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -12,9 +12,11 @@ function daysAgoStr(days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Best-effort numeric value for sorting salary strings like "$275,000 - $375,000".
-function salaryValue(salary) {
-  const nums = (salary || '').match(/\$[\d,]+/g);
+// Numeric value for sorting: the parsed range when the server extracted one,
+// else a best-effort scrape of strings like "$275,000 - $375,000".
+function salaryValue(job) {
+  if (job.salary_max != null || job.salary_min != null) return job.salary_max ?? job.salary_min;
+  const nums = (job.salary || '').match(/\$[\d,]+/g);
   if (!nums) return -1;
   return Math.max(...nums.map(n => Number(n.replace(/[$,]/g, ''))));
 }
@@ -24,7 +26,7 @@ const COMPARATORS = {
   title: (a, b) => a.title.localeCompare(b.title),
   company: (a, b) => a.company.localeCompare(b.company),
   category: (a, b) => (a.category || '').localeCompare(b.category || ''),
-  salary: (a, b) => salaryValue(a.salary) - salaryValue(b.salary),
+  salary: (a, b) => salaryValue(a) - salaryValue(b),
   status: (a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status),
   level: (a, b) => {
     const ia = LEVELS.indexOf(a.level);
@@ -48,6 +50,7 @@ export default function App() {
   const [sort, setSort] = useState({ key: 'date_found', dir: 'desc' });
   const [error, setError] = useState(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [editingJob, setEditingJob] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -92,6 +95,16 @@ export default function App() {
     }
   };
 
+  // Save from the edit form; receives only the changed fields (may be none).
+  // Errors propagate so the form can display them next to the inputs.
+  const handleEditSave = async (fields) => {
+    if (!Object.keys(fields).length) return;
+    const updated = await updateJob(editingJob.id, fields);
+    setJobs(prev => prev.map(j => (j.id === editingJob.id ? updated : j)));
+    setStats(await fetchStats());
+    flashSaved();
+  };
+
   const handleDelete = async (id) => {
     try {
       await deleteJob(id);
@@ -125,7 +138,7 @@ export default function App() {
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
-      return [job.title, job.company, job.category, job.fit, job.note, job.salary]
+      return [job.title, job.company, job.category, job.fit, job.note, job.salary, job.rejection_reason]
         .some(v => (v || '').toLowerCase().includes(text));
     });
 
@@ -224,7 +237,24 @@ export default function App() {
         onSort={handleSort}
         onUpdate={handleUpdate}
         onDelete={handleDelete}
+        onEdit={setEditingJob}
       />
+
+      {editingJob && (
+        <div
+          className="modal-backdrop"
+          onClick={e => { if (e.target === e.currentTarget) setEditingJob(null); }}
+        >
+          <JobForm
+            jobs={jobs}
+            job={editingJob}
+            title={`Edit: ${editingJob.title}`}
+            submitLabel="Save changes"
+            onSubmit={handleEditSave}
+            onClose={() => setEditingJob(null)}
+          />
+        </div>
+      )}
     </div>
   );
 }
