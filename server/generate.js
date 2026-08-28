@@ -5,7 +5,7 @@ import { XMLValidator } from 'fast-xml-parser';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { getJob, listJobs, getCompany, getSettings, getJobDocument, upsertJobDocument, DB_PATH } from './db.js';
+import { getJob, listJobs, getCompany, getPerson, getJobDocument, upsertJobDocument, DB_PATH } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
@@ -16,9 +16,11 @@ const MODEL = 'claude-opus-5';
 // API as document blocks; anything else (.docx, images, ...) is unsupported.
 const TEXT_EXTS = new Set(['', '.md', '.markdown', '.txt', '.text', '.html', '.htm']);
 
-export function documentsDir() {
-  const { documents_dir } = getSettings();
-  return documents_dir || path.join(path.dirname(DB_PATH), 'documents');
+// The base documents folder for one person (their configured documents_dir,
+// or the shared default — per-job folder names include the globally-unique
+// job id, so people can safely share the default).
+export function documentsDir(person) {
+  return person?.documents_dir || path.join(path.dirname(DB_PATH), 'documents');
 }
 
 // True when the SDK can find working credentials (ANTHROPIC_API_KEY, an auth
@@ -115,13 +117,13 @@ async function docxResumeSource(docxPath) {
   return { format: 'docx', buffer: data, documentXml, stylesXml };
 }
 
-// The standard resume in whichever form generation needs: a .docx becomes a
-// formatting template + content source; other formats become a content block
-// (and outputs fall back to Markdown).
-async function resumeSource() {
-  const { resume_path } = getSettings();
+// The person's standard resume in whichever form generation needs: a .docx
+// becomes a formatting template + content source; other formats become a
+// content block (and outputs fall back to Markdown).
+async function resumeSource(person) {
+  const { resume_path } = person;
   if (!resume_path) {
-    throw new Error('No standard resume configured. Set one in Settings first.');
+    throw new Error(`No standard resume configured for ${person.name}. Set one in Settings first.`);
   }
   if (path.extname(resume_path).toLowerCase() === '.docx') return docxResumeSource(resume_path);
   const { block, reason } = await fileBlock(resume_path, "The candidate's standard resume");
@@ -270,26 +272,30 @@ function clean(s) {
   return s.replace(/[<>:"\/\\|?*\u0000-\u001f]/g, '_').replace(/[.\s]+$/, '').trim().slice(0, 60);
 }
 
-async function saveDocument(job, kind, fileName, text) {
+async function saveDocument(person, job, kind, fileName, text) {
+  const base = documentsDir(person);
   const folder = `${job.id} - ${clean(job.company)} - ${clean(job.title)}`;
-  await mkdir(path.join(documentsDir(), folder), { recursive: true });
-  await writeFile(path.join(documentsDir(), folder, fileName), text, 'utf8');
+  await mkdir(path.join(base, folder), { recursive: true });
+  await writeFile(path.join(base, folder, fileName), text, 'utf8');
   // Relative paths are stored with forward slashes so the DB stays portable.
   return upsertJobDocument(job.id, kind, `${folder}/${fileName}`);
 }
 
-// Generate the tailored resume and cover letter for one job. With
-// skipExisting, jobs that already have both documents are skipped (used by
-// batch runs so a re-run only fills gaps).
-export async function generateJobDocuments({ id, url }, { skipExisting = false } = {}) {
-  const job = getJob({ id, url });
+// Generate the tailored resume and cover letter for one job, using the owning
+// person's standard resume and documents folder. With skipExisting, jobs that
+// already have both documents are skipped (used by batch runs so a re-run
+// only fills gaps).
+export async function generateJobDocuments({ id, url, personId }, { skipExisting = false } = {}) {
+  const job = getJob({ id, url, personId });
   if (!job) throw new Error('Job not found');
+  const person = getPerson(job.person_id);
+  if (!person) throw new Error(`Job ${job.id} belongs to an unknown person (id ${job.person_id})`);
   if (skipExisting && getJobDocument(job.id, 'resume') && getJobDocument(job.id, 'cover_letter')) {
     return { job_id: job.id, title: job.title, company: job.company, skipped: true, documents: [] };
   }
 
   const [source, resumeSkill, coverSkill] = await Promise.all([
-    resumeSource(),
+    resumeSource(person),
     loadSkill('tailored-resume'),
     loadSkill('tailored-cover-letter')
   ]);
@@ -333,8 +339,8 @@ export async function generateJobDocuments({ id, url }, { skipExisting = false }
       instruction: `${coverSkill}\n\n${DOCX_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
     });
     documents = [
-      await saveDocument(job, 'resume', 'resume.docx', resumeDocx),
-      await saveDocument(job, 'cover_letter', 'cover-letter.docx', await buildDocx(source.buffer, coverXml))
+      await saveDocument(person, job, 'resume', 'resume.docx', resumeDocx),
+      await saveDocument(person, job, 'cover_letter', 'cover-letter.docx', await buildDocx(source.buffer, coverXml))
     ];
   } else {
     const resumeText = await generateDocument({
@@ -348,17 +354,18 @@ export async function generateJobDocuments({ id, url }, { skipExisting = false }
       instruction: `${coverSkill}\n\n${MD_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
     });
     documents = [
-      await saveDocument(job, 'resume', 'resume.md', resumeText),
-      await saveDocument(job, 'cover_letter', 'cover-letter.md', coverText)
+      await saveDocument(person, job, 'resume', 'resume.md', resumeText),
+      await saveDocument(person, job, 'cover_letter', 'cover-letter.md', coverText)
     ];
   }
   return { job_id: job.id, title: job.title, company: job.company, skipped: false, documents };
 }
 
-// Batch: every job currently in "Interested". Individual failures don't stop
+// Batch: every job currently in "Interested" (optionally for one person; each
+// job always uses its own person's config). Individual failures don't stop
 // the run; each job's outcome is reported.
-export async function generateForInterested({ skipExisting = true } = {}) {
-  const jobs = listJobs({ status: 'Interested', excludeNotInterestedCompanies: true });
+export async function generateForInterested({ personId, skipExisting = true } = {}) {
+  const jobs = listJobs({ personId, status: 'Interested', excludeNotInterestedCompanies: true });
   const results = [];
   for (const job of jobs) {
     try {

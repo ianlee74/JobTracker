@@ -90,10 +90,11 @@ db.exec(`
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL DEFAULT 1,
     date_found TEXT NOT NULL,
     title TEXT NOT NULL,
     company TEXT NOT NULL,
-    url TEXT NOT NULL UNIQUE,
+    url TEXT NOT NULL,
     category TEXT DEFAULT '',
     salary TEXT DEFAULT '',
     salary_confidence TEXT DEFAULT 'ok',
@@ -184,29 +185,133 @@ db.exec(`
   );
 `);
 
+// Migration: people. Each person has their own set of jobs and their own
+// document-generation config (resume_path: their standard resume, the source
+// of truth for generated documents; documents_dir: base folder for per-job
+// document folders, empty = <data dir>/documents).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    resume_path TEXT NOT NULL DEFAULT '',
+    documents_dir TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+`);
+
+// Seed the first person, inheriting the legacy global settings (settings-table
+// rows from single-person databases; empty on a fresh database).
+if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
+  const legacy = Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(r => [r.key, r.value]));
+  db.prepare('INSERT INTO people (name, resume_path, documents_dir) VALUES (?, ?, ?)')
+    .run('Default', legacy.resume_path || '', legacy.documents_dir || '');
+}
+
+// Migration: single-person jobs tables (no person_id, globally-unique url)
+// are rebuilt with a person_id owned by the seeded person, and URL uniqueness
+// becomes per-person so two people can track the same posting independently.
+{
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!cols.includes('person_id')) {
+    const firstPerson = db.prepare('SELECT MIN(id) AS id FROM people').get().id;
+    const copyCols = cols.join(', ');
+    db.exec(`
+      CREATE TABLE jobs_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        person_id INTEGER NOT NULL DEFAULT ${firstPerson},
+        date_found TEXT NOT NULL,
+        title TEXT NOT NULL,
+        company TEXT NOT NULL,
+        url TEXT NOT NULL,
+        category TEXT DEFAULT '',
+        salary TEXT DEFAULT '',
+        salary_min INTEGER,
+        salary_max INTEGER,
+        salary_confidence TEXT DEFAULT 'ok',
+        fit TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'new',
+        note TEXT DEFAULT '',
+        level TEXT NOT NULL DEFAULT '',
+        rejection_reason TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      INSERT INTO jobs_migrated (${copyCols}) SELECT ${copyCols} FROM jobs;
+      DROP TABLE jobs;
+      ALTER TABLE jobs_migrated RENAME TO jobs;
+      CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+      CREATE INDEX IF NOT EXISTS idx_jobs_date_found ON jobs(date_found);
+    `);
+  }
+  // Backs the per-person duplicate skip in addJobs (ON CONFLICT(person_id, url)).
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_person_url ON jobs(person_id, url)');
+}
+
 function touch(fields) {
   return { ...fields, updated_at: new Date().toISOString() };
 }
 
-// resume_path: the user's standard resume, the source of truth for generated
-// documents. documents_dir: base folder for per-job document folders (empty =
-// <data dir>/documents).
-export const SETTING_KEYS = ['resume_path', 'documents_dir'];
-
-export function getSettings() {
-  const settings = Object.fromEntries(SETTING_KEYS.map(k => [k, '']));
-  for (const row of db.prepare('SELECT key, value FROM settings').all()) {
-    if (SETTING_KEYS.includes(row.key)) settings[row.key] = row.value;
-  }
-  return settings;
+export function listPeople() {
+  return db.prepare(`
+    SELECT people.*, (SELECT COUNT(*) FROM jobs WHERE jobs.person_id = people.id) AS job_count
+    FROM people ORDER BY name COLLATE NOCASE
+  `).all();
 }
 
-export function updateSettings(fields) {
-  const set = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-  for (const key of SETTING_KEYS) {
-    if (fields[key] !== undefined) set.run(key, String(fields[key]).trim());
+export function getPerson(id) {
+  return db.prepare('SELECT * FROM people WHERE id = ?').get(id) ?? null;
+}
+
+export function findPersonByName(name) {
+  return db.prepare('SELECT * FROM people WHERE name = ? COLLATE NOCASE').get(String(name ?? '').trim()) ?? null;
+}
+
+// The person to use when a caller doesn't name one — only unambiguous when
+// exactly one person exists.
+export function onlyPerson() {
+  const rows = db.prepare('SELECT * FROM people ORDER BY id LIMIT 2').all();
+  return rows.length === 1 ? rows[0] : null;
+}
+
+export function addPerson(name) {
+  name = String(name ?? '').trim();
+  if (!name) throw new Error('Person name is required');
+  if (findPersonByName(name)) throw new Error(`A person named "${name}" already exists`);
+  const info = db.prepare('INSERT INTO people (name) VALUES (?)').run(name);
+  return getPerson(info.lastInsertRowid);
+}
+
+const PERSON_FIELDS = ['name', 'resume_path', 'documents_dir'];
+
+export function updatePerson(id, fields) {
+  const person = getPerson(id);
+  if (!person) return null;
+  if (fields.name !== undefined) {
+    const name = String(fields.name).trim();
+    if (!name) throw new Error('Person name cannot be empty');
+    const existing = findPersonByName(name);
+    if (existing && existing.id !== person.id) throw new Error(`A person named "${name}" already exists`);
   }
-  return getSettings();
+  const updates = Object.entries(fields)
+    .filter(([k]) => PERSON_FIELDS.includes(k))
+    .map(([k, v]) => [k, String(v ?? '').trim()]);
+  if (!updates.length) return person;
+  const sql = `UPDATE people SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`;
+  db.prepare(sql).run(...updates.map(([, v]) => v), new Date().toISOString(), person.id);
+  return getPerson(person.id);
+}
+
+export function deletePerson(id) {
+  const person = getPerson(id);
+  if (!person) return false;
+  const jobCount = db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE person_id = ?').get(person.id).n;
+  if (jobCount > 0) throw new Error(`${person.name} still has ${jobCount} tracked job(s) — delete them first`);
+  if (!db.prepare('SELECT 1 FROM people WHERE id != ? LIMIT 1').get(person.id)) {
+    throw new Error('Cannot delete the last person');
+  }
+  db.prepare('DELETE FROM people WHERE id = ?').run(person.id);
+  return true;
 }
 
 export function listJobDocuments(jobId) {
@@ -225,12 +330,13 @@ export function upsertJobDocument(jobId, kind, relPath) {
   return getJobDocument(jobId, kind);
 }
 
-export function listJobs({ status, company, level, q, since, limit, excludeNotInterestedCompanies } = {}) {
+export function listJobs({ personId, status, company, level, q, since, limit, excludeNotInterestedCompanies } = {}) {
   const where = [];
   const params = [];
   if (excludeNotInterestedCompanies) {
     where.push('company NOT IN (SELECT name FROM companies WHERE not_interested = 1)');
   }
+  if (personId != null) { where.push('person_id = ?'); params.push(personId); }
   if (status) { where.push('status = ?'); params.push(status); }
   if (company) { where.push('company LIKE ?'); params.push(`%${company}%`); }
   if (level) { where.push('level = ?'); params.push(level); }
@@ -241,30 +347,49 @@ export function listJobs({ status, company, level, q, since, limit, excludeNotIn
     params.push(like, like, like, like, like, like, like);
   }
   // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
-  // so callers know what exists without a second query.
-  let sql = 'SELECT jobs.*, (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = jobs.id) AS doc_kinds FROM jobs';
+  // so callers know what exists without a second query. person_name saves a
+  // lookup when listing across people.
+  let sql = `SELECT jobs.*,
+    (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = jobs.id) AS doc_kinds,
+    (SELECT name FROM people WHERE people.id = jobs.person_id) AS person_name
+    FROM jobs`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
   sql += ' ORDER BY date_found DESC, company ASC, id ASC';
   if (limit) { sql += ' LIMIT ?'; params.push(limit); }
   return db.prepare(sql).all(...params);
 }
 
-export function getJob({ id, url }) {
+export function getJob({ id, url, personId }) {
   if (id != null) return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) ?? null;
-  if (url) return db.prepare('SELECT * FROM jobs WHERE url = ?').get(url) ?? null;
+  if (url && personId != null) return db.prepare('SELECT * FROM jobs WHERE url = ? AND person_id = ?').get(url, personId) ?? null;
+  if (url) {
+    // URL uniqueness is per-person, so a bare URL lookup can be ambiguous.
+    const rows = db.prepare('SELECT * FROM jobs WHERE url = ? ORDER BY id LIMIT 2').all(url);
+    if (rows.length > 1) throw new Error('Multiple people track this posting URL — identify the job by id or specify the person');
+    return rows[0] ?? null;
+  }
   return null;
 }
 
-// Adds jobs, skipping any whose URL is already tracked (so a daily run can
-// safely re-send an old suggestion without clobbering its status/note).
-export function addJobs(jobs) {
+export function isUrlTracked(url) {
+  return Boolean(db.prepare('SELECT 1 FROM jobs WHERE url = ? LIMIT 1').get(url));
+}
+
+// Adds jobs, skipping any whose URL that person already tracks (so a daily run
+// can safely re-send an old suggestion without clobbering its status/note).
+// Each job may carry its own person_id; defaultPersonId covers the rest.
+export function addJobs(jobs, defaultPersonId) {
   const insert = db.prepare(`
-    INSERT INTO jobs (date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(url) DO NOTHING
+    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(person_id, url) DO NOTHING
   `);
   const results = { added: 0, skipped: 0, jobs: [] };
   for (const job of jobs) {
+    const personId = job.person_id ?? defaultPersonId;
+    if (personId == null || !getPerson(personId)) {
+      throw new Error(`Unknown person id "${personId}" — every job needs a valid person`);
+    }
     const status = STATUSES.includes(job.status) ? job.status : 'new';
     const level = job.level ? normalizeLevel(job.level) : classifyLevel(job.title);
     // An explicitly supplied range wins; otherwise parse it from the salary string.
@@ -272,6 +397,7 @@ export function addJobs(jobs) {
       ? { min: job.salary_min ?? null, max: job.salary_max ?? null }
       : parseSalary(job.salary);
     const info = insert.run(
+      personId,
       job.date_found || new Date().toISOString().slice(0, 10),
       job.title,
       job.company,
@@ -297,13 +423,16 @@ export function addJobs(jobs) {
   return results;
 }
 
-const EDITABLE_FIELDS = ['date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'level', 'rejection_reason'];
+const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'level', 'rejection_reason'];
 
-export function updateJob({ id, url }, fields) {
-  const job = getJob({ id, url });
+export function updateJob({ id, url, personId }, fields) {
+  const job = getJob({ id, url, personId });
   if (!job) return null;
   if (fields.status && !STATUSES.includes(fields.status)) {
     throw new Error(`Invalid status "${fields.status}". Valid statuses: ${STATUSES.join(', ')}`);
+  }
+  if (fields.person_id != null && !getPerson(fields.person_id)) {
+    throw new Error(`Unknown person id "${fields.person_id}"`);
   }
   // Keep the parsed range in sync: an explicit min/max wins; otherwise a new
   // salary string is re-parsed (clearing the range if nothing parses).
@@ -324,8 +453,8 @@ export function updateJob({ id, url }, fields) {
   return getJob({ id: job.id });
 }
 
-export function deleteJob({ id, url }) {
-  const job = getJob({ id, url });
+export function deleteJob({ id, url, personId }) {
+  const job = getJob({ id, url, personId });
   if (!job) return false;
   db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id);
   // Document rows go with the job; the files themselves are left on disk.
@@ -381,14 +510,16 @@ export function upsertCompany(name, fields) {
   return getCompany(name);
 }
 
-export function getStats() {
-  const rows = db.prepare('SELECT status, COUNT(*) AS n FROM jobs GROUP BY status').all();
+export function getStats({ personId } = {}) {
+  const where = personId != null ? ' WHERE person_id = ?' : '';
+  const params = personId != null ? [personId] : [];
+  const rows = db.prepare(`SELECT status, COUNT(*) AS n FROM jobs${where} GROUP BY status`).all(...params);
   const byStatus = Object.fromEntries(STATUSES.map(s => [s, 0]));
   let total = 0;
   for (const row of rows) {
     byStatus[row.status] = row.n;
     total += row.n;
   }
-  const latest = db.prepare('SELECT MAX(date_found) AS d FROM jobs').get();
+  const latest = db.prepare(`SELECT MAX(date_found) AS d FROM jobs${where}`).get(...params);
   return { total, byStatus, lastFound: latest?.d ?? null };
 }

@@ -27,8 +27,11 @@ const SYNC_MESSAGES = {
 // in browsers with the File System Access API — also stores a handle to the
 // ORIGINAL file so the snapshot can be refreshed automatically before each
 // generation instead of the user re-providing the file after every edit.
-export default function SettingsDialog({ onClose, onSaved }) {
+// Settings belong to one person (the one selected in the header); personName
+// is shown so it's obvious whose resume is being configured.
+export default function SettingsDialog({ personId, personName, onClose, onSaved }) {
   const [settings, setSettings] = useState(null);
+  const [name, setName] = useState(personName || '');
   const [resumePath, setResumePath] = useState('');
   const [documentsDir, setDocumentsDir] = useState('');
   const [link, setLink] = useState(null);
@@ -38,24 +41,25 @@ export default function SettingsDialog({ onClose, onSaved }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchSettings()
+    fetchSettings(personId)
       .then(s => {
         setSettings(s);
+        setName(s.person_name);
         setResumePath(s.resume_path);
         setDocumentsDir(s.documents_dir);
       })
       .catch(err => setError(err.message));
-    getResumeLink().then(l => setLink(l || null));
-  }, []);
+    getResumeLink(personId).then(l => setLink(l || null));
+  }, [personId]);
 
   const applyUpload = async (result, handle) => {
     setSettings(result);
     setResumePath(result.path);
     if (handle) {
-      await saveResumeLink(handle, result.path);
-      setLink(await getResumeLink());
+      await saveResumeLink(personId, handle, result.path);
+      setLink(await getResumeLink(personId));
     } else {
-      await clearResumeLink();
+      await clearResumeLink(personId);
       setLink(null);
     }
   };
@@ -76,7 +80,7 @@ export default function SettingsDialog({ onClose, onSaved }) {
         }]
       });
       setBusy(true);
-      await applyUpload(await uploadResumeFile(await handle.getFile()), handle);
+      await applyUpload(await uploadResumeFile(personId, await handle.getFile()), handle);
     } catch (err) {
       if (err?.name !== 'AbortError') setError(err.message);
     } finally {
@@ -97,7 +101,7 @@ export default function SettingsDialog({ onClose, onSaved }) {
       if (handle && handle.kind !== 'file') return;
       const f = handle ? await handle.getFile() : file;
       if (!f) return;
-      await applyUpload(await uploadResumeFile(f), handle);
+      await applyUpload(await uploadResumeFile(personId, f), handle);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -110,10 +114,10 @@ export default function SettingsDialog({ onClose, onSaved }) {
     setSyncMsg(null);
     setBusy(true);
     try {
-      const result = await syncResumeFromLink({ interactive: true });
+      const result = await syncResumeFromLink({ personId, interactive: true });
       setSyncMsg(SYNC_MESSAGES[result] || result);
-      setSettings(await fetchSettings());
-      setLink(await getResumeLink());
+      setSettings(await fetchSettings(personId));
+      setLink(await getResumeLink(personId));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -127,11 +131,11 @@ export default function SettingsDialog({ onClose, onSaved }) {
     setError(null);
     try {
       const path = cleanPath(resumePath);
-      await saveSettings({ resume_path: path, documents_dir: cleanPath(documentsDir) });
+      await saveSettings(personId, { name, resume_path: path, documents_dir: cleanPath(documentsDir) });
       // A manually entered path replaces the managed snapshot — the stored
       // handle no longer describes what generation reads, so drop it.
       if (link && path !== link.managedPath) {
-        await clearResumeLink();
+        await clearResumeLink(personId);
       }
       onSaved?.();
       onClose();
@@ -158,11 +162,22 @@ export default function SettingsDialog({ onClose, onSaved }) {
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <form className="add-job-form settings-form" onSubmit={handleSave}>
-        <div className="form-title">Settings</div>
+        <div className="form-title">Settings — {settings?.person_name ?? personName}</div>
         {error && <div className="error-banner">{error}</div>}
         {!settings && !error && <div className="picker-empty">Loading…</div>}
         {settings && (
           <div className="form-grid">
+            <label className="span-2">
+              Person name
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Who these jobs and this resume belong to"
+              />
+              <span className="settings-hint">
+                The resume and documents folder below apply only to this person; every person has their own.
+              </span>
+            </label>
             <label className="span-2">
               Standard resume (PDF, Word, Markdown, or plain text)
               <div className="url-row" {...dropProps}>

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, updateSettings, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
 import { generateJobDocuments, generateForInterested, documentsDir, hasApiCredentials } from './generate.js';
 
 const server = new McpServer({
@@ -10,6 +10,23 @@ const server = new McpServer({
 });
 
 const statusEnum = z.enum(STATUSES);
+
+const personArg = z.string().optional().describe('Person the jobs belong to — their name (or numeric id). Optional while only one person is tracked; see list_people.');
+
+// Resolve a person argument (name or id). When omitted: the only person if
+// exactly one exists, otherwise an error naming the candidates.
+function resolvePerson(person) {
+  const names = () => listPeople().map(p => p.name).join(', ');
+  if (person == null || String(person).trim() === '') {
+    const only = onlyPerson();
+    if (only) return only;
+    throw new Error(`Multiple people are tracked — specify person. Available: ${names()}`);
+  }
+  const raw = String(person).trim();
+  const found = findPersonByName(raw) || (/^\d+$/.test(raw) ? getPerson(Number(raw)) : null);
+  if (!found) throw new Error(`No person named "${raw}". Available: ${names()}`);
+  return found;
+}
 
 const jobInput = {
   title: z.string().describe('Job title'),
@@ -32,10 +49,34 @@ function ok(data) {
   return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
 }
 
+server.registerTool('list_people', {
+  title: 'List people',
+  description: 'List the people (candidates) whose job searches are tracked, with each person\'s job count and document-generation config (standard resume path, documents folder).',
+  inputSchema: {}
+}, async () => ok(listPeople()));
+
+server.registerTool('add_person', {
+  title: 'Add a person',
+  description: 'Add a new person (candidate) to track jobs for. Their standard resume and documents folder can then be set with configure_document_generation.',
+  inputSchema: {
+    name: z.string().describe('The person\'s name (must be unique)')
+  }
+}, async ({ name }) => ok(addPerson(name)));
+
+server.registerTool('update_person', {
+  title: 'Update a person',
+  description: 'Rename a person. (Per-person resume/documents settings are changed with configure_document_generation.)',
+  inputSchema: {
+    person: z.string().describe('The person\'s current name (or numeric id)'),
+    new_name: z.string().describe('The new name')
+  }
+}, async ({ person, new_name }) => ok(updatePerson(resolvePerson(person).id, { name: new_name })));
+
 server.registerTool('list_jobs', {
   title: 'List jobs',
-  description: 'List tracked job opportunities, optionally filtered by status, company, free-text search, or date found.',
+  description: 'List tracked job opportunities, optionally filtered by person, status, company, free-text search, or date found. Without a person filter, jobs for all people are returned (each row includes person_name).',
   inputSchema: {
+    person: z.string().optional().describe('Filter to one person\'s jobs — their name (or numeric id)'),
     status: statusEnum.optional().describe('Filter to one status'),
     company: z.string().optional().describe('Filter by company name (substring match)'),
     level: z.string().optional().describe(`Filter by seniority level (exact match), e.g. ${LEVELS.slice(0, 4).join(', ')}`),
@@ -44,30 +85,36 @@ server.registerTool('list_jobs', {
     limit: z.number().int().positive().optional().describe('Max rows to return'),
     include_not_interested_companies: z.boolean().optional().describe('Jobs from companies marked "not interested" are hidden by default; pass true to include them')
   }
-}, async ({ include_not_interested_companies, ...args }) =>
-  ok(listJobs({ ...args, excludeNotInterestedCompanies: !include_not_interested_companies })));
+}, async ({ person, include_not_interested_companies, ...args }) =>
+  ok(listJobs({
+    ...args,
+    personId: person ? resolvePerson(person).id : undefined,
+    excludeNotInterestedCompanies: !include_not_interested_companies
+  })));
 
 server.registerTool('get_job', {
   title: 'Get a job',
-  description: 'Fetch one tracked job by id or by posting URL.',
+  description: 'Fetch one tracked job by id or by posting URL. URL uniqueness is per person, so add person when looking up a URL that several people might track.',
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
-    url: z.string().optional().describe('Job posting URL')
+    url: z.string().optional().describe('Job posting URL'),
+    person: z.string().optional().describe('Disambiguates a URL lookup — the person\'s name (or numeric id)')
   }
-}, async ({ id, url }) => {
-  const job = getJob({ id, url });
+}, async ({ id, url, person }) => {
+  const job = getJob({ id, url, personId: person ? resolvePerson(person).id : undefined });
   if (!job) throw new Error('Job not found');
   return ok(job);
 });
 
 server.registerTool('add_jobs', {
   title: 'Add jobs',
-  description: 'Add one or more new job opportunities to the tracker. Jobs whose URL is already tracked are skipped (their existing status and notes are preserved), so it is always safe to send the full day\'s findings.',
+  description: 'Add one or more new job opportunities to the tracker for one person. Jobs whose URL that person already tracks are skipped (their existing status and notes are preserved), so it is always safe to send the full day\'s findings.',
   inputSchema: {
-    jobs: z.array(z.object(jobInput)).describe('Jobs to add')
+    jobs: z.array(z.object(jobInput)).describe('Jobs to add'),
+    person: personArg
   }
-}, async ({ jobs }) => {
-  const result = addJobs(jobs);
+}, async ({ jobs, person }) => {
+  const result = addJobs(jobs, resolvePerson(person).id);
   return ok({ added: result.added, skipped_existing: result.skipped, added_jobs: result.jobs });
 });
 
@@ -77,6 +124,7 @@ server.registerTool('update_job', {
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
     url: z.string().optional().describe('Job posting URL (alternative to id)'),
+    person: z.string().optional().describe('Disambiguates a URL lookup when several people track the same URL — the person\'s name (or numeric id)'),
     status: statusEnum.optional(),
     rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" — set it when setting that status. Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else. Cleared automatically if the status changes to anything else.`),
     note: z.string().optional().describe('Replaces the existing note'),
@@ -92,14 +140,15 @@ server.registerTool('update_job', {
     level: z.string().optional().describe(`Seniority level, ideally one of: ${LEVELS.join(', ')}`),
     date_found: z.string().optional()
   }
-}, async ({ id, url, append_note, ...fields }) => {
+}, async ({ id, url, person, append_note, ...fields }) => {
   if (id == null && !url) throw new Error('Provide id or url to identify the job');
+  const personId = person ? resolvePerson(person).id : undefined;
   if (append_note) {
-    const existing = getJob({ id, url });
+    const existing = getJob({ id, url, personId });
     if (!existing) throw new Error('Job not found');
     fields.note = existing.note ? `${existing.note}\n${append_note}` : append_note;
   }
-  const job = updateJob({ id, url }, fields);
+  const job = updateJob({ id, url, personId }, fields);
   if (!job) throw new Error('Job not found');
   return ok(job);
 });
@@ -109,11 +158,12 @@ server.registerTool('delete_job', {
   description: 'Permanently remove a job from the tracker. Prefer setting status to "Not Moving Forward" unless the entry is a mistake/duplicate.',
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
-    url: z.string().optional().describe('Job posting URL (alternative to id)')
+    url: z.string().optional().describe('Job posting URL (alternative to id)'),
+    person: z.string().optional().describe('Disambiguates a URL lookup when several people track the same URL — the person\'s name (or numeric id)')
   }
-}, async ({ id, url }) => {
+}, async ({ id, url, person }) => {
   if (id == null && !url) throw new Error('Provide id or url to identify the job');
-  if (!deleteJob({ id, url })) throw new Error('Job not found');
+  if (!deleteJob({ id, url, personId: person ? resolvePerson(person).id : undefined })) throw new Error('Job not found');
   return ok({ deleted: true });
 });
 
@@ -138,40 +188,48 @@ server.registerTool('update_company', {
 
 server.registerTool('generate_documents', {
   title: 'Generate tailored resume & cover letter',
-  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), or to every job in "Interested" status, using the Anthropic API and the configured standard resume. Files are written to a per-job folder under the documents directory. Slow: allow a few minutes per job.',
+  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), or to every job in "Interested" status, using the Anthropic API and the owning person\'s standard resume. Files are written to a per-job folder under that person\'s documents directory. Slow: allow a few minutes per job.',
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
     url: z.string().optional().describe('Job posting URL (alternative to id)'),
+    person: z.string().optional().describe('With all_interested: limit the batch to this person\'s jobs. With url: disambiguates which person\'s job. Name (or numeric id).'),
     all_interested: z.boolean().optional().describe('Generate for every job in "Interested" status instead of a single job'),
     skip_existing: z.boolean().optional().describe('Skip jobs that already have both documents (default true for all_interested, false for a single job)')
   }
-}, async ({ id, url, all_interested, skip_existing }) => {
-  if (all_interested) return ok(await generateForInterested({ skipExisting: skip_existing ?? true }));
+}, async ({ id, url, person, all_interested, skip_existing }) => {
+  const personId = person ? resolvePerson(person).id : undefined;
+  if (all_interested) return ok(await generateForInterested({ personId, skipExisting: skip_existing ?? true }));
   if (id == null && !url) throw new Error('Provide id or url, or set all_interested: true');
-  return ok(await generateJobDocuments({ id, url }, { skipExisting: Boolean(skip_existing) }));
+  return ok(await generateJobDocuments({ id, url, personId }, { skipExisting: Boolean(skip_existing) }));
 });
 
 server.registerTool('configure_document_generation', {
   title: 'Configure document generation',
-  description: 'View or change document-generation settings: the standard resume file (PDF, Word .docx, Markdown, or plain text — the source of truth for generated documents; with a .docx, generated documents are .docx files mirroring its formatting, otherwise Markdown) and the base folder where per-job document folders are created. Call with no arguments to just view the current settings. The Anthropic API key is read from the server environment, never stored here.',
+  description: 'View or change one person\'s document-generation settings: their standard resume file (PDF, Word .docx, Markdown, or plain text — the source of truth for generated documents; with a .docx, generated documents are .docx files mirroring its formatting, otherwise Markdown) and the base folder where per-job document folders are created. Call with only the person to just view their current settings. The Anthropic API key is read from the server environment, never stored here.',
   inputSchema: {
-    resume_path: z.string().optional().describe('Absolute path to the standard resume file'),
-    documents_dir: z.string().optional().describe('Absolute path to the base documents folder (empty string resets to the default under the data directory)')
+    person: personArg,
+    resume_path: z.string().optional().describe('Absolute path to the person\'s standard resume file'),
+    documents_dir: z.string().optional().describe('Absolute path to the person\'s base documents folder (empty string resets to the default under the data directory)')
   }
-}, async (fields) => {
-  const settings = updateSettings(fields);
+}, async ({ person, ...fields }) => {
+  const updated = updatePerson(resolvePerson(person).id, fields);
   return ok({
-    ...settings,
-    documents_dir_effective: documentsDir(),
+    person_id: updated.id,
+    person_name: updated.name,
+    resume_path: updated.resume_path,
+    documents_dir: updated.documents_dir,
+    documents_dir_effective: documentsDir(updated),
     api_credentials_found: await hasApiCredentials()
   });
 });
 
 server.registerTool('get_summary', {
   title: 'Get summary',
-  description: 'Get pipeline totals: job counts by status, overall total, and the most recent date jobs were found.',
-  inputSchema: {}
-}, async () => ok(getStats()));
+  description: 'Get pipeline totals: job counts by status, overall total, and the most recent date jobs were found. Optionally scoped to one person.',
+  inputSchema: {
+    person: z.string().optional().describe('Limit the summary to this person\'s jobs — their name (or numeric id)')
+  }
+}, async ({ person }) => ok(getStats({ personId: person ? resolvePerson(person).id : undefined })));
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
