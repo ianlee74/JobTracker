@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, jobHref } from './constants.js';
+import { documentUrl } from './api.js';
 
 function NoteInput({ job, onUpdate }) {
   const [value, setValue] = useState(job.note || '');
@@ -106,23 +107,45 @@ function RejectionReason({ job, onUpdate }) {
   );
 }
 
-function JobRow({ job, onUpdate, onDelete, onEdit }) {
+// "Resume · Cover letter" links once documents have been generated for a job.
+// They open inline; the ⬇ next to each downloads it with a friendly filename.
+function DocLinks({ job }) {
+  const ORDER = ['resume', 'cover_letter'];
+  const kinds = (job.doc_kinds || '').split(',').filter(Boolean)
+    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  if (!kinds.length) return null;
+  const LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
+  return (
+    <div className="doc-links">
+      📄{kinds.map(kind => (
+        <span key={kind} className="doc-link-pair">
+          <a href={documentUrl(job.id, kind)} target="_blank" rel="noopener noreferrer">{LABELS[kind] || kind}</a>
+          <a href={documentUrl(job.id, kind, true)} title={`Download ${(LABELS[kind] || kind).toLowerCase()}`} className="doc-dl">⬇</a>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
-  // file:// links are blocked from http pages, so serve them via the server.
-  const isLocalFile = (job.url || '').startsWith('file:');
-  const href = isLocalFile ? `/api/local-file?url=${encodeURIComponent(job.url)}` : job.url;
 
   return (
     <tr>
       <td className="cell-date">{job.date_found}</td>
       <td className="cell-title">
-        <a href={href} target="_blank" rel="noopener noreferrer">{job.title}</a>
-        {isLocalFile && <span className="file-badge" title={`Local file: ${job.url}`}>📄</span>}
+        <a href={jobHref(job.url)} target="_blank" rel="noopener noreferrer">{job.title}</a>
         {job.fit && <div className="fit">{job.fit}</div>}
+        <DocLinks job={job} />
       </td>
-      <td>{job.company}</td>
+      <td>
+        <button className="company-link" onClick={() => onOpenCompany(job.company)} title="Open company page">
+          {job.company}
+        </button>
+        {companyNotInterested && <span className="ni-badge" title="Company marked Not Interested">🚫</span>}
+      </td>
       <td>{job.category}</td>
       <td>
         <select
@@ -156,6 +179,16 @@ function JobRow({ job, onUpdate, onDelete, onEdit }) {
       <td><NoteInput job={job} onUpdate={onUpdate} /></td>
       <td className="cell-actions">
         <button
+          className={`edit-btn gen-btn ${generating ? 'busy' : ''}`}
+          title={generating
+            ? 'Generating documents… (this takes a few minutes)'
+            : `${job.doc_kinds ? 'Regenerate' : 'Generate'} a tailored resume & cover letter with Claude`}
+          disabled={generating}
+          onClick={() => onGenerate(job)}
+        >
+          {generating ? '⏳' : '✨'}
+        </button>
+        <button
           className="edit-btn"
           title="Edit this job"
           onClick={() => onEdit(job)}
@@ -186,7 +219,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies }) {
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
   }
@@ -202,13 +235,23 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdi
             <SortableHeader label="Level" sortKey="level" sort={sort} onSort={onSort} width="9%" />
             <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width="11%" />
             <SortableHeader label="Status" sortKey="status" sort={sort} onSort={onSort} width="10%" />
-            <th style={{ width: '12%' }}>Note</th>
-            <th style={{ width: '5%' }}></th>
+            <th style={{ width: '10%' }}>Note</th>
+            <th style={{ width: '7%' }}></th>
           </tr>
         </thead>
         <tbody>
           {jobs.map(job => (
-            <JobRow key={job.id} job={job} onUpdate={onUpdate} onDelete={onDelete} onEdit={onEdit} />
+            <JobRow
+              key={job.id}
+              job={job}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onEdit={onEdit}
+              onOpenCompany={onOpenCompany}
+              onGenerate={onGenerate}
+              generating={generatingIds.has(job.id)}
+              companyNotInterested={flaggedCompanies.has(job.company)}
+            />
           ))}
         </tbody>
       </table>

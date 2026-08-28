@@ -76,6 +76,13 @@ export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
     setForm(prev => ({ ...prev, [field]: value }));
   };
 
+  // Money fields display as $###,### but store bare digits in the form state.
+  const formatMoney = (v) => (v === '' ? '' : '$' + Number(v).toLocaleString('en-US'));
+  const setMoney = (field) => (e) => {
+    const digits = e.target.value.replace(/[^0-9]/g, '');
+    setForm(prev => ({ ...prev, [field]: digits }));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -205,15 +212,21 @@ export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
-        <label>
-          Salary (as listed)
-          <input value={form.salary} onChange={set('salary')} placeholder="$200,000 - $250,000" />
-        </label>
+        <div className="salary-listed-cell">
+          <label>
+            Salary (as listed)
+            <input value={form.salary} onChange={set('salary')} placeholder="$200,000 - $250,000" />
+          </label>
+          <label className="checkbox-label">
+            <input type="checkbox" checked={form.salary_uncertain} onChange={set('salary_uncertain')} />
+            Salary uncertain / not disclosed
+          </label>
+        </div>
         <label>
           Salary min / max
           <div className="salary-range-row">
-            <input type="number" min="0" step="1000" value={form.salary_min} onChange={set('salary_min')} placeholder="Auto" />
-            <input type="number" min="0" step="1000" value={form.salary_max} onChange={set('salary_max')} placeholder="Auto" />
+            <input inputMode="numeric" value={formatMoney(form.salary_min)} onChange={setMoney('salary_min')} placeholder="Auto" />
+            <input inputMode="numeric" value={formatMoney(form.salary_max)} onChange={setMoney('salary_max')} placeholder="Auto" />
           </div>
         </label>
         {form.status === 'Not Moving Forward' && (
@@ -238,10 +251,6 @@ export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
         <label className="span-2">
           Note
           <input value={form.note} onChange={set('note')} placeholder="Optional" />
-        </label>
-        <label className="checkbox-label span-2">
-          <input type="checkbox" checked={form.salary_uncertain} onChange={set('salary_uncertain')} />
-          Salary uncertain / not disclosed
         </label>
       </div>
       <div className="form-actions">

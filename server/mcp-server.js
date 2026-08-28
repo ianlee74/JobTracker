@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, STATUSES, LEVELS, REJECTION_REASONS } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, updateSettings, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
+import { generateJobDocuments, generateForInterested, documentsDir, hasApiCredentials } from './generate.js';
 
 const server = new McpServer({
   name: 'jobtracker',
@@ -40,9 +41,11 @@ server.registerTool('list_jobs', {
     level: z.string().optional().describe(`Filter by seniority level (exact match), e.g. ${LEVELS.slice(0, 4).join(', ')}`),
     q: z.string().optional().describe('Free-text search across title, company, category, fit, note, and salary'),
     since: z.string().optional().describe('Only jobs found on/after this date (YYYY-MM-DD)'),
-    limit: z.number().int().positive().optional().describe('Max rows to return')
+    limit: z.number().int().positive().optional().describe('Max rows to return'),
+    include_not_interested_companies: z.boolean().optional().describe('Jobs from companies marked "not interested" are hidden by default; pass true to include them')
   }
-}, async (args) => ok(listJobs(args)));
+}, async ({ include_not_interested_companies, ...args }) =>
+  ok(listJobs({ ...args, excludeNotInterestedCompanies: !include_not_interested_companies })));
 
 server.registerTool('get_job', {
   title: 'Get a job',
@@ -112,6 +115,56 @@ server.registerTool('delete_job', {
   if (id == null && !url) throw new Error('Provide id or url to identify the job');
   if (!deleteJob({ id, url })) throw new Error('Job not found');
   return ok({ deleted: true });
+});
+
+server.registerTool('list_companies', {
+  title: 'List companies',
+  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, note, not-interested flag, and job count.',
+  inputSchema: {}
+}, async () => ok(listCompanies()));
+
+server.registerTool('update_company', {
+  title: 'Update company info',
+  description: 'Save notes/info about a company and/or mark it "not interested". Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked). Creates the company record if it does not exist yet.',
+  inputSchema: {
+    name: z.string().describe('Company name, exactly as it appears on its jobs'),
+    website: z.string().optional().describe('Company website URL'),
+    company_type: z.string().optional().describe(`Company type, ideally one of: ${COMPANY_TYPES.join(', ')} — or free text for anything else`),
+    employee_count: z.string().optional().describe(`Employee count range, ideally one of: ${EMPLOYEE_COUNTS.join(', ')}`),
+    note: z.string().optional().describe('Replaces the existing company note'),
+    not_interested: z.boolean().optional().describe('true hides the company\'s jobs by default; false restores them')
+  }
+}, async ({ name, ...fields }) => ok(upsertCompany(name, fields)));
+
+server.registerTool('generate_documents', {
+  title: 'Generate tailored resume & cover letter',
+  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), or to every job in "Interested" status, using the Anthropic API and the configured standard resume. Files are written to a per-job folder under the documents directory. Slow: allow a few minutes per job.',
+  inputSchema: {
+    id: z.number().int().optional().describe('Job id'),
+    url: z.string().optional().describe('Job posting URL (alternative to id)'),
+    all_interested: z.boolean().optional().describe('Generate for every job in "Interested" status instead of a single job'),
+    skip_existing: z.boolean().optional().describe('Skip jobs that already have both documents (default true for all_interested, false for a single job)')
+  }
+}, async ({ id, url, all_interested, skip_existing }) => {
+  if (all_interested) return ok(await generateForInterested({ skipExisting: skip_existing ?? true }));
+  if (id == null && !url) throw new Error('Provide id or url, or set all_interested: true');
+  return ok(await generateJobDocuments({ id, url }, { skipExisting: Boolean(skip_existing) }));
+});
+
+server.registerTool('configure_document_generation', {
+  title: 'Configure document generation',
+  description: 'View or change document-generation settings: the standard resume file (PDF, Word .docx, Markdown, or plain text — the source of truth for generated documents; with a .docx, generated documents are .docx files mirroring its formatting, otherwise Markdown) and the base folder where per-job document folders are created. Call with no arguments to just view the current settings. The Anthropic API key is read from the server environment, never stored here.',
+  inputSchema: {
+    resume_path: z.string().optional().describe('Absolute path to the standard resume file'),
+    documents_dir: z.string().optional().describe('Absolute path to the base documents folder (empty string resets to the default under the data directory)')
+  }
+}, async (fields) => {
+  const settings = updateSettings(fields);
+  return ok({
+    ...settings,
+    documents_dir_effective: documentsDir(),
+    api_credentials_found: await hasApiCredentials()
+  });
 });
 
 server.registerTool('get_summary', {
