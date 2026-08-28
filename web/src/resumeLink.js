@@ -10,7 +10,10 @@ import { fetchSettings, uploadResumeFile } from './api.js';
 
 const DB_NAME = 'jobtracker';
 const STORE = 'file-handles';
-const KEY = 'standard-resume';
+// One link per person; single-person databases stored theirs under the bare
+// legacy key, which is still read as a fallback for any person.
+const LEGACY_KEY = 'standard-resume';
+const keyFor = (personId) => `standard-resume-${personId}`;
 
 function idb() {
   return new Promise((resolve, reject) => {
@@ -34,25 +37,29 @@ export const supportsFilePicker = () => typeof window.showOpenFilePicker === 'fu
 
 // managedPath: the server-side snapshot path this handle keeps in sync; the
 // link is ignored if the user later points resume_path somewhere else.
-export function saveResumeLink(handle, managedPath) {
-  return op('readwrite', s => s.put({ handle, managedPath, name: handle.name, synced_at: Date.now() }, KEY));
+export function saveResumeLink(personId, handle, managedPath) {
+  return op('readwrite', s => s.put({ handle, managedPath, name: handle.name, synced_at: Date.now() }, keyFor(personId)));
 }
 
-export function getResumeLink() {
-  return op('readonly', s => s.get(KEY));
+export async function getResumeLink(personId) {
+  return (await op('readonly', s => s.get(keyFor(personId))))
+    ?? op('readonly', s => s.get(LEGACY_KEY));
 }
 
-export function clearResumeLink() {
-  return op('readwrite', s => s.delete(KEY));
+export async function clearResumeLink(personId) {
+  const own = await op('readonly', s => s.get(keyFor(personId)));
+  await op('readwrite', s => s.delete(keyFor(personId)));
+  // Only clear the legacy entry when it was the link in use for this person.
+  if (!own) await op('readwrite', s => s.delete(LEGACY_KEY));
 }
 
 // Re-read the original and push it to the server if the link is usable.
 // `interactive` allows a permission prompt (needs a user gesture). Returns:
 // 'synced' | 'unchanged' | 'no-link' | 'not-in-use' | 'permission' | 'unreadable'
-export async function syncResumeFromLink({ interactive = false } = {}) {
-  const link = await getResumeLink();
+export async function syncResumeFromLink({ personId, interactive = false } = {}) {
+  const link = await getResumeLink(personId);
   if (!link?.handle) return 'no-link';
-  const settings = await fetchSettings();
+  const settings = await fetchSettings(personId);
   if (settings.resume_path !== link.managedPath) return 'not-in-use';
   let permission = await link.handle.queryPermission({ mode: 'read' });
   if (permission === 'prompt' && interactive) {
@@ -66,7 +73,10 @@ export async function syncResumeFromLink({ interactive = false } = {}) {
     return 'unreadable'; // original moved or deleted
   }
   if (link.last_modified === file.lastModified && settings.resume_exists) return 'unchanged';
-  const { path } = await uploadResumeFile(file);
-  await op('readwrite', s => s.put({ ...link, managedPath: path, last_modified: file.lastModified, synced_at: Date.now() }, KEY));
+  const { path } = await uploadResumeFile(personId, file);
+  // Written under the per-person key, migrating a legacy-keyed link as a side
+  // effect (the legacy entry is deleted once its replacement is stored).
+  await op('readwrite', s => s.put({ ...link, managedPath: path, last_modified: file.lastModified, synced_at: Date.now() }, keyFor(personId)));
+  await op('readwrite', s => s.delete(LEGACY_KEY));
   return 'synced';
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, addJob, updateJob, deleteJob, updateCompany, generateDocuments } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
@@ -43,6 +43,7 @@ const COMPARATORS = {
 };
 
 const FILTERS_STORAGE_KEY = 'jobtracker.viewFilters';
+const PERSON_STORAGE_KEY = 'jobtracker.person';
 
 const DEFAULT_FILTERS = {
   statusFilters: [],
@@ -174,10 +175,71 @@ function FilterFlyout({
   );
 }
 
+// Small modal for adding a candidate to track jobs for; their resume and
+// documents folder are configured afterwards in Settings.
+function AddPersonForm({ onSubmit, onClose }) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSubmit(name.trim());
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <form className="add-job-form person-form" onSubmit={handleSubmit}>
+        <div className="form-title">Add person</div>
+        {error && <div className="error-banner">{error}</div>}
+        <div className="form-grid">
+          <label className="span-2">
+            Name
+            <input
+              autoFocus
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Who to track jobs for"
+            />
+            <span className="settings-hint">
+              Each person has their own job list, standard resume, and documents folder (set in Settings ⚙ once they're selected).
+            </span>
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="submit" className="primary-btn" disabled={saving || !name.trim()}>
+            {saving ? 'Adding…' : 'Add person'}
+          </button>
+          <button type="button" className="clear-btn" onClick={onClose}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
   const [jobs, setJobs] = useState([]);
   const [stats, setStats] = useState(null);
   const [companies, setCompanies] = useState([]);
+  const [people, setPeople] = useState([]);
+  // The selected candidate; everything below (jobs, tiles, settings) is scoped
+  // to them. null until the people list first loads.
+  const [personId, setPersonId] = useState(() => {
+    const saved = Number(localStorage.getItem(PERSON_STORAGE_KEY));
+    return Number.isInteger(saved) && saved > 0 ? saved : null;
+  });
+  const [addPersonOpen, setAddPersonOpen] = useState(false);
   const [activeCompany, setActiveCompany] = useState(null);
   const [savedFilters] = useState(loadSavedFilters);
   const [showNotInterested, setShowNotInterested] = useState(savedFilters.showNotInterested);
@@ -196,7 +258,16 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [jobsData, statsData, companiesData] = await Promise.all([fetchJobs(), fetchStats(), fetchCompanies()]);
+      const peopleData = await fetchPeople();
+      setPeople(peopleData);
+      // Keep the selection valid: fall back to the first person when the saved
+      // selection is gone (or this is the first load).
+      let pid = personId;
+      if (!peopleData.some(p => p.id === pid)) {
+        pid = peopleData[0]?.id ?? null;
+        setPersonId(pid);
+      }
+      const [jobsData, statsData, companiesData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies()]);
       setJobs(jobsData);
       setStats(statsData);
       setCompanies(companiesData);
@@ -204,7 +275,7 @@ export default function App() {
     } catch (err) {
       setError(err.message);
     }
-  }, []);
+  }, [personId]);
 
   useEffect(() => {
     refresh();
@@ -212,6 +283,12 @@ export default function App() {
     const interval = setInterval(refresh, 30_000);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  useEffect(() => {
+    try {
+      if (personId != null) localStorage.setItem(PERSON_STORAGE_KEY, String(personId));
+    } catch { /* storage blocked — the selection just won't persist */ }
+  }, [personId]);
 
   // Persist the view (filters + sort) so it survives refreshes and restarts.
   useEffect(() => {
@@ -229,12 +306,24 @@ export default function App() {
   };
 
   const handleAdd = async (job) => {
-    const result = await addJob(job);
+    const result = await addJob({ ...job, person_id: personId });
     if (result.added === 0) {
       throw new Error('That posting URL is already tracked.');
     }
     await refresh();
     flashSaved();
+  };
+
+  const handleAddPerson = async (name) => {
+    const person = await addPerson(name);
+    setAddPersonOpen(false);
+    setPersonId(person.id); // triggers a refresh scoped to the new person
+    flashSaved();
+  };
+
+  const handleSelectPerson = (value) => {
+    if (value === '__add__') setAddPersonOpen(true);
+    else setPersonId(Number(value));
   };
 
   const handleUpdate = async (id, fields) => {
@@ -295,7 +384,7 @@ export default function App() {
   // Failures don't block generation — the stored snapshot is still usable.
   const refreshResume = async () => {
     try {
-      const result = await syncResumeFromLink({ interactive: true });
+      const result = await syncResumeFromLink({ personId, interactive: true });
       if (result === 'unreadable') {
         setError('Couldn\'t re-read your original resume (moved or deleted?) — generating from the last stored copy.');
       } else if (result === 'permission') {
@@ -446,6 +535,17 @@ export default function App() {
         </div>
         <div className="header-right">
           <div className={`saved-flash ${savedFlash ? 'visible' : ''}`}>✓ Saved</div>
+          {people.length > 0 && (
+            <select
+              className="person-select"
+              value={personId ?? ''}
+              onChange={e => handleSelectPerson(e.target.value)}
+              title="Show jobs for this person"
+            >
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              <option value="__add__">＋ Add person…</option>
+            </select>
+          )}
           {!activeCompany && (
             <button
               className="clear-btn generate-all-btn"
@@ -556,7 +656,21 @@ export default function App() {
       />
       )}
 
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} onSaved={flashSaved} />}
+      {settingsOpen && personId != null && (
+        <SettingsDialog
+          personId={personId}
+          personName={people.find(p => p.id === personId)?.name}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => { flashSaved(); refresh(); }}
+        />
+      )}
+
+      {addPersonOpen && (
+        <AddPersonForm
+          onSubmit={handleAddPerson}
+          onClose={() => setAddPersonOpen(false)}
+        />
+      )}
 
       {editingJob && (
         <div

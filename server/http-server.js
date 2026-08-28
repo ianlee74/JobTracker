@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, getSettings, updateSettings, getJobDocument, STATUSES, LEVELS, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,21 +63,38 @@ function listRoots() {
   return roots;
 }
 
-async function settingsPayload() {
-  const settings = getSettings();
-  const rp = settings.resume_path ? path.resolve(settings.resume_path) : '';
+// Document-generation settings live on the person; ?person=<id> selects whose
+// (optional only while a single person exists).
+function personFromQuery(url) {
+  const p = url.searchParams.get('person');
+  if (p) {
+    const person = getPerson(Number(p));
+    if (!person) throw new Error(`No person with id "${p}"`);
+    return person;
+  }
+  const only = onlyPerson();
+  if (only) return only;
+  throw new Error('The "person" query parameter is required when multiple people are tracked');
+}
+
+async function settingsPayload(person) {
+  const rp = person.resume_path ? path.resolve(person.resume_path) : '';
   const dataDir = path.resolve(path.dirname(DB_PATH));
   return {
-    ...settings,
-    documents_dir_effective: documentsDir(),
+    person_id: person.id,
+    person_name: person.name,
+    resume_path: person.resume_path,
+    documents_dir: person.documents_dir,
+    documents_dir_effective: documentsDir(person),
     resume_exists: Boolean(rp) && existsSync(rp),
     // An old-style dropped copy under data/postings — frozen, never refreshed.
     resume_is_snapshot: Boolean(rp) && rp.toLowerCase().startsWith(path.resolve(POSTINGS_DIR).toLowerCase() + path.sep),
-    // The managed snapshot (data/standard-resume.*) — the UI keeps it in sync
-    // with the user's original when it holds a file handle to it.
+    // The managed snapshot (data/standard-resume-<person>.*, or the legacy
+    // data/standard-resume.*) — the UI keeps it in sync with the person's
+    // original when it holds a file handle to it.
     resume_is_managed: Boolean(rp)
       && path.dirname(rp).toLowerCase() === dataDir.toLowerCase()
-      && path.basename(rp).toLowerCase().startsWith('standard-resume.'),
+      && path.basename(rp).toLowerCase().startsWith('standard-resume'),
     api_credentials_found: await hasApiCredentials()
   };
 }
@@ -105,6 +122,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/jobs') {
     const p = url.searchParams;
     return json(res, 200, listJobs({
+      personId: p.get('person') ? Number(p.get('person')) : undefined,
       status: p.get('status') || undefined,
       company: p.get('company') || undefined,
       level: p.get('level') || undefined,
@@ -164,7 +182,7 @@ async function handleApi(req, res, url) {
     const fileUrl = url.searchParams.get('url') || '';
     if (!fileUrl.startsWith('file:')) return json(res, 400, { error: 'Expected a file:// URL' });
     // Only serve files that are actually some tracked job's posting URL.
-    if (!getJob({ url: fileUrl })) return json(res, 404, { error: 'No tracked job has this file URL' });
+    if (!isUrlTracked(fileUrl)) return json(res, 404, { error: 'No tracked job has this file URL' });
     let filePath;
     try { filePath = fileURLToPath(fileUrl); }
     catch { return json(res, 400, { error: 'Invalid file URL' }); }
@@ -179,6 +197,45 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/companies') {
     return json(res, 200, listCompanies());
+  }
+
+  // People: the candidates whose jobs are tracked. Each carries their own
+  // document-generation settings (resume_path, documents_dir).
+  if (url.pathname === '/api/people') {
+    if (req.method === 'GET') return json(res, 200, listPeople());
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 201, addPerson(body.name));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+  }
+
+  if (parts[0] === 'api' && parts[1] === 'people' && parts.length === 3) {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid person id' });
+    if (req.method === 'GET') {
+      const person = getPerson(id);
+      return person ? json(res, 200, person) : json(res, 404, { error: 'Not found' });
+    }
+    if (req.method === 'PATCH') {
+      const body = await readBody(req);
+      try {
+        const person = updatePerson(id, body);
+        return person ? json(res, 200, person) : json(res, 404, { error: 'Not found' });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (req.method === 'DELETE') {
+      try {
+        return deletePerson(id) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Not found' });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
   }
 
   // Single company info; PATCH upserts, so saving notes for a company that has
@@ -197,24 +254,41 @@ async function handleApi(req, res, url) {
     }
   }
 
-  // Document-generation settings. The Anthropic API key is never stored here —
-  // the server picks it up from the environment (ANTHROPIC_API_KEY or an
-  // `ant auth login` profile); the response only reports whether one was found.
+  // Per-person document-generation settings (?person=<id>). The Anthropic API
+  // key is never stored here — the server picks it up from the environment
+  // (ANTHROPIC_API_KEY or an `ant auth login` profile); the response only
+  // reports whether one was found.
   if (url.pathname === '/api/settings') {
+    let person;
+    try {
+      person = personFromQuery(url);
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
     if (req.method === 'PATCH') {
       const body = await readBody(req);
-      updateSettings(body);
+      try {
+        person = updatePerson(person.id, body);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
     }
     if (req.method === 'GET' || req.method === 'PATCH') {
-      return json(res, 200, await settingsPayload());
+      return json(res, 200, await settingsPayload(person));
     }
   }
 
-  // Stores/overwrites the managed snapshot of the standard resume and points
-  // resume_path at it. The UI uploads through here both when the resume is
-  // first chosen/dropped and on every re-sync from the original file it holds
-  // a browser file handle to — that keeps the snapshot current.
+  // Stores/overwrites the person's managed snapshot of their standard resume
+  // and points their resume_path at it. The UI uploads through here both when
+  // the resume is first chosen/dropped and on every re-sync from the original
+  // file it holds a browser file handle to — that keeps the snapshot current.
   if (req.method === 'POST' && url.pathname === '/api/settings/resume-file') {
+    let person;
+    try {
+      person = personFromQuery(url);
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
     const rawName = path.basename(url.searchParams.get('name') || 'resume');
     const ext = (path.extname(rawName) || '.docx').toLowerCase().replace(/[^.a-z0-9]/g, '');
     let body;
@@ -225,16 +299,18 @@ async function handleApi(req, res, url) {
     }
     if (!body.length) return json(res, 400, { error: 'The uploaded resume is empty' });
     const dataDir = path.dirname(DB_PATH);
-    const target = path.join(dataDir, `standard-resume${ext}`);
+    const target = path.join(dataDir, `standard-resume-${person.id}${ext}`);
     await writeFile(target, body);
-    // A format switch (e.g. .pdf -> .docx) leaves the old snapshot behind — tidy it.
-    for (const entry of await readdir(dataDir)) {
-      if (entry.toLowerCase().startsWith('standard-resume.') && entry !== path.basename(target)) {
-        await rm(path.join(dataDir, entry), { force: true });
-      }
+    // The previous snapshot may live elsewhere — a format switch (.pdf ->
+    // .docx) or the legacy single-person standard-resume.* name — tidy it.
+    const old = person.resume_path ? path.resolve(person.resume_path) : '';
+    if (old && old !== path.resolve(target)
+      && path.dirname(old).toLowerCase() === path.resolve(dataDir).toLowerCase()
+      && path.basename(old).toLowerCase().startsWith('standard-resume')) {
+      await rm(old, { force: true });
     }
-    updateSettings({ resume_path: target });
-    return json(res, 200, { path: target, original_name: rawName, ...(await settingsPayload()) });
+    person = updatePerson(person.id, { resume_path: target });
+    return json(res, 200, { path: target, original_name: rawName, ...(await settingsPayload(person)) });
   }
 
   // Serves a generated document inline (Markdown renders as plain text) or as
@@ -244,15 +320,16 @@ async function handleApi(req, res, url) {
     const kind = url.searchParams.get('kind') || '';
     const doc = Number.isInteger(jobId) ? getJobDocument(jobId, kind) : null;
     if (!doc) return json(res, 404, { error: 'No such document' });
-    const filePath = path.resolve(documentsDir(), doc.path);
-    if (!filePath.startsWith(path.resolve(documentsDir()))) return json(res, 403, { error: 'Forbidden' });
+    const job = getJob({ id: jobId });
+    const base = documentsDir(getPerson(job.person_id));
+    const filePath = path.resolve(base, doc.path);
+    if (!filePath.startsWith(path.resolve(base))) return json(res, 403, { error: 'Forbidden' });
     let content;
     try {
       content = await readFile(filePath);
     } catch {
       return json(res, 404, { error: `Document file missing on disk: ${filePath}` });
     }
-    const job = getJob({ id: jobId });
     const ext = path.extname(filePath).toLowerCase();
     const label = kind === 'resume' ? 'Resume' : 'Cover Letter';
     const name = `${label} - ${job.company} - ${job.title}${ext}`.replace(/[<>:"\/\\|?*]/g, '_');
@@ -271,7 +348,8 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/stats') {
-    return json(res, 200, { ...getStats(), statuses: STATUSES, levels: LEVELS });
+    const p = url.searchParams.get('person');
+    return json(res, 200, { ...getStats({ personId: p ? Number(p) : undefined }), statuses: STATUSES, levels: LEVELS });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/jobs') {
@@ -282,7 +360,13 @@ async function handleApi(req, res, url) {
         return json(res, 400, { error: 'Each job requires title, company, and url' });
       }
     }
-    return json(res, 201, addJobs(jobs));
+    // Jobs without their own person_id go to ?person=<id> (or the only person).
+    try {
+      const needsDefault = jobs.some(job => job.person_id == null);
+      return json(res, 201, addJobs(jobs, needsDefault ? personFromQuery(url).id : undefined));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
   }
 
   // Generate the tailored resume + cover letter for one job. Slow (two model

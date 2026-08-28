@@ -10,8 +10,13 @@ async function request(url, options = {}) {
   return res.json();
 }
 
-export const fetchJobs = () => request('/api/jobs');
-export const fetchStats = () => request('/api/stats');
+export const fetchJobs = (personId) =>
+  request('/api/jobs' + (personId ? `?person=${personId}` : ''));
+export const fetchStats = (personId) =>
+  request('/api/stats' + (personId ? `?person=${personId}` : ''));
+export const fetchPeople = () => request('/api/people');
+export const addPerson = (name) =>
+  request('/api/people', { method: 'POST', body: JSON.stringify({ name }) });
 export const addJob = (job) =>
   request('/api/jobs', { method: 'POST', body: JSON.stringify(job) });
 export const updateJob = (id, fields) =>
@@ -33,17 +38,19 @@ export const uploadPosting = (file) =>
 // no dir means the server's home directory.
 export const browseDir = (dir) =>
   request('/api/browse' + (dir ? `?dir=${encodeURIComponent(dir)}` : ''));
-export const fetchSettings = () => request('/api/settings');
-// Stores/overwrites the server's managed snapshot of the standard resume and
-// points the resume_path setting at it; resolves to { path, ...settings }.
-export const uploadResumeFile = (file) =>
-  request(`/api/settings/resume-file?name=${encodeURIComponent(file.name)}`, {
+// Document-generation settings are per person.
+export const fetchSettings = (personId) => request(`/api/settings?person=${personId}`);
+// Stores/overwrites the server's managed snapshot of the person's standard
+// resume and points their resume_path setting at it; resolves to
+// { path, ...settings }.
+export const uploadResumeFile = (personId, file) =>
+  request(`/api/settings/resume-file?person=${personId}&name=${encodeURIComponent(file.name)}`, {
     method: 'POST',
     headers: { 'Content-Type': file.type || 'application/octet-stream' },
     body: file
   });
-export const saveSettings = (fields) =>
-  request('/api/settings', { method: 'PATCH', body: JSON.stringify(fields) });
+export const saveSettings = (personId, fields) =>
+  request(`/api/settings?person=${personId}`, { method: 'PATCH', body: JSON.stringify(fields) });
 // Generates the tailored resume + cover letter for one job. Slow (minutes) —
 // two model calls happen server-side before this resolves.
 export const generateDocuments = (id, opts = {}) =>
