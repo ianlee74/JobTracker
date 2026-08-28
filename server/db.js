@@ -15,6 +15,11 @@ export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Quali
 
 export const LEVELS = ['Senior', 'Staff', 'Principal', 'Lead', 'Manager', 'Senior Manager', 'Director', 'Senior Director', 'VP', 'Executive', 'Other'];
 
+export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'Enterprise', 'Agency / Consultancy', 'Non-profit', 'Government', 'Other'];
+
+// LinkedIn-style headcount buckets, since that's how companies usually self-report.
+export const EMPLOYEE_COUNTS = ['1-10', '11-50', '51-200', '201-500', '501-1,000', '1,001-5,000', '5,001-10,000', '10,000+'];
+
 // Ordered most-specific first: "Senior Engineering Manager" must classify as
 // Senior Manager (not Senior), "Senior/Staff Engineer" as Staff (the higher band).
 const LEVEL_PATTERNS = [
@@ -121,6 +126,31 @@ db.exec(`
   }
 }
 
+// Migration: companies table — per-company notes/info and a "not interested"
+// flag (jobs from flagged companies are hidden by default).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    website TEXT DEFAULT '',
+    note TEXT DEFAULT '',
+    not_interested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+`);
+
+// Migration: add company_type and employee_count to companies.
+{
+  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  if (!cols.includes('company_type')) {
+    db.exec("ALTER TABLE companies ADD COLUMN company_type TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.includes('employee_count')) {
+    db.exec("ALTER TABLE companies ADD COLUMN employee_count TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 // Migration: add parsed salary range columns, backfilled from the salary strings.
 {
   const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
@@ -135,13 +165,72 @@ db.exec(`
   }
 }
 
+// Migration: app settings (key/value) and generated job documents. Documents
+// live on disk in a per-job folder; rows hold paths relative to the documents
+// base directory so the whole tree can be moved by changing one setting.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+  );
+  CREATE TABLE IF NOT EXISTS job_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(job_id, kind)
+  );
+`);
+
 function touch(fields) {
   return { ...fields, updated_at: new Date().toISOString() };
 }
 
-export function listJobs({ status, company, level, q, since, limit } = {}) {
+// resume_path: the user's standard resume, the source of truth for generated
+// documents. documents_dir: base folder for per-job document folders (empty =
+// <data dir>/documents).
+export const SETTING_KEYS = ['resume_path', 'documents_dir'];
+
+export function getSettings() {
+  const settings = Object.fromEntries(SETTING_KEYS.map(k => [k, '']));
+  for (const row of db.prepare('SELECT key, value FROM settings').all()) {
+    if (SETTING_KEYS.includes(row.key)) settings[row.key] = row.value;
+  }
+  return settings;
+}
+
+export function updateSettings(fields) {
+  const set = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  for (const key of SETTING_KEYS) {
+    if (fields[key] !== undefined) set.run(key, String(fields[key]).trim());
+  }
+  return getSettings();
+}
+
+export function listJobDocuments(jobId) {
+  return db.prepare('SELECT * FROM job_documents WHERE job_id = ? ORDER BY kind').all(jobId);
+}
+
+export function getJobDocument(jobId, kind) {
+  return db.prepare('SELECT * FROM job_documents WHERE job_id = ? AND kind = ?').get(jobId, kind) ?? null;
+}
+
+export function upsertJobDocument(jobId, kind, relPath) {
+  db.prepare(`
+    INSERT INTO job_documents (job_id, kind, path) VALUES (?, ?, ?)
+    ON CONFLICT(job_id, kind) DO UPDATE SET path = excluded.path, updated_at = ?
+  `).run(jobId, kind, relPath, new Date().toISOString());
+  return getJobDocument(jobId, kind);
+}
+
+export function listJobs({ status, company, level, q, since, limit, excludeNotInterestedCompanies } = {}) {
   const where = [];
   const params = [];
+  if (excludeNotInterestedCompanies) {
+    where.push('company NOT IN (SELECT name FROM companies WHERE not_interested = 1)');
+  }
   if (status) { where.push('status = ?'); params.push(status); }
   if (company) { where.push('company LIKE ?'); params.push(`%${company}%`); }
   if (level) { where.push('level = ?'); params.push(level); }
@@ -151,7 +240,9 @@ export function listJobs({ status, company, level, q, since, limit } = {}) {
     const like = `%${q}%`;
     params.push(like, like, like, like, like, like, like);
   }
-  let sql = 'SELECT * FROM jobs';
+  // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
+  // so callers know what exists without a second query.
+  let sql = 'SELECT jobs.*, (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = jobs.id) AS doc_kinds FROM jobs';
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
   sql += ' ORDER BY date_found DESC, company ASC, id ASC';
   if (limit) { sql += ' LIMIT ?'; params.push(limit); }
@@ -237,7 +328,57 @@ export function deleteJob({ id, url }) {
   const job = getJob({ id, url });
   if (!job) return false;
   db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id);
+  // Document rows go with the job; the files themselves are left on disk.
+  db.prepare('DELETE FROM job_documents WHERE job_id = ?').run(job.id);
   return true;
+}
+
+// Every company referenced by a job (with defaults when it has no saved row)
+// plus any saved companies whose jobs are gone.
+export function listCompanies() {
+  const saved = db.prepare('SELECT * FROM companies').all();
+  const byName = new Map(saved.map(r => [r.name, r]));
+  const counts = db.prepare('SELECT company, COUNT(*) AS n FROM jobs GROUP BY company').all();
+  const result = [];
+  for (const { company, n } of counts) {
+    result.push({ name: company, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, ...(byName.get(company) || {}), job_count: n });
+    byName.delete(company);
+  }
+  for (const row of byName.values()) result.push({ ...row, job_count: 0 });
+  return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getCompany(name) {
+  const row = db.prepare('SELECT * FROM companies WHERE name = ?').get(name);
+  const count = db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company = ?').get(name);
+  return { name, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, ...(row || {}), job_count: count.n };
+}
+
+const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'not_interested'];
+
+// Canonicalize a caller-supplied value against a preset list (case-insensitive);
+// values that don't match any preset are kept as given.
+function normalizePreset(value, presets) {
+  const canon = (s) => String(s).toLowerCase().replace(/[,\s]/g, ''); // "11 - 50" and "1000+" match "11-50" and "1,000+"
+  const exact = presets.find(p => canon(p) === canon(value));
+  return exact ?? String(value).trim();
+}
+
+export function upsertCompany(name, fields) {
+  name = (name || '').trim();
+  if (!name) throw new Error('Company name is required');
+  if (fields.company_type) fields = { ...fields, company_type: normalizePreset(fields.company_type, COMPANY_TYPES) };
+  if (fields.employee_count) fields = { ...fields, employee_count: normalizePreset(fields.employee_count, EMPLOYEE_COUNTS) };
+  const updates = Object.entries(fields).filter(([k]) => COMPANY_FIELDS.includes(k));
+  if (!db.prepare('SELECT 1 FROM companies WHERE name = ?').get(name)) {
+    db.prepare('INSERT INTO companies (name) VALUES (?)').run(name);
+  }
+  if (updates.length) {
+    const sql = `UPDATE companies SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE name = ?`;
+    const values = updates.map(([, v]) => (typeof v === 'boolean' ? (v ? 1 : 0) : v));
+    db.prepare(sql).run(...values, new Date().toISOString(), name);
+  }
+  return getCompany(name);
 }
 
 export function getStats() {
