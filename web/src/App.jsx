@@ -557,6 +557,16 @@ export default function App() {
           {!activeCompany && (
             <button
               className="clear-btn generate-all-btn"
+              onClick={() => window.open(`/api/interested-email/preview?person=${personId}`, '_blank')}
+              disabled={!jobs.some(j => j.status === 'Interested' && !flaggedCompanies.has(j.company))}
+              title='Preview an email digest of every "Interested" job, with feedback links for the candidate'
+            >
+              ✉ Email Interested
+            </button>
+          )}
+          {!activeCompany && (
+            <button
+              className="clear-btn generate-all-btn"
               onClick={handleGenerateInterested}
               disabled={Boolean(batchProgress) || !jobs.some(j => j.status === 'Interested' && !flaggedCompanies.has(j.company))}
               title='Generate a tailored resume & cover letter for every job in "Interested" status'

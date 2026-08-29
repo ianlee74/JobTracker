@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -209,6 +210,26 @@ db.exec(`
   );
 `);
 
+// Migration: the person's email address — where their Interested-jobs digest
+// email is sent.
+{
+  const cols = db.prepare('PRAGMA table_info(people)').all().map(c => c.name);
+  if (!cols.includes('email')) {
+    db.exec("ALTER TABLE people ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+// Migration: per-job feedback token. Minted when a job first goes into a
+// digest email; its /respond/<token> links let the candidate report back
+// without authentication, so the token must be unguessable.
+{
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!cols.includes('feedback_token')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN feedback_token TEXT NOT NULL DEFAULT ''");
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_feedback_token ON jobs(feedback_token) WHERE feedback_token != ''");
+}
+
 // Seed the first person, inheriting the legacy global settings (settings-table
 // rows from single-person databases; empty on a fresh database).
 if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
@@ -291,7 +312,7 @@ export function addPerson(name) {
   return getPerson(info.lastInsertRowid);
 }
 
-const PERSON_FIELDS = ['name', 'resume_path', 'documents_dir'];
+const PERSON_FIELDS = ['name', 'resume_path', 'documents_dir', 'email'];
 
 export function updatePerson(id, fields) {
   const person = getPerson(id);
@@ -379,6 +400,22 @@ export function getJob({ id, url, personId }) {
     return rows[0] ?? null;
   }
   return null;
+}
+
+// The job's stable feedback token, minting one on first use. Digest emails
+// embed it in /respond/<token> links so the candidate can report back.
+export function ensureFeedbackToken(jobId) {
+  const job = db.prepare('SELECT id, feedback_token FROM jobs WHERE id = ?').get(jobId);
+  if (!job) throw new Error(`No job with id ${jobId}`);
+  if (job.feedback_token) return job.feedback_token;
+  const token = randomBytes(16).toString('base64url');
+  db.prepare('UPDATE jobs SET feedback_token = ? WHERE id = ?').run(token, jobId);
+  return token;
+}
+
+export function getJobByFeedbackToken(token) {
+  if (!token) return null;
+  return db.prepare('SELECT * FROM jobs WHERE feedback_token = ?').get(String(token)) ?? null;
 }
 
 export function isUrlTracked(url) {

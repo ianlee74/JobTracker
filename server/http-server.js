@@ -6,10 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { listJobs, getJob, isUrlTracked, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
+import { composeInterestedEmail, defaultBaseUrl } from './email.js';
+import { handleRespond } from './respond.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 const PORT = Number(process.env.JOBTRACKER_PORT || process.env.PORT) || 7080;
+// Local-only by default. Set JOBTRACKER_HOST=0.0.0.0 (and JOBTRACKER_BASE_URL
+// to this machine's LAN address) so digest-email feedback links work from a
+// candidate's own device on the local network.
+const HOST = process.env.JOBTRACKER_HOST || '127.0.0.1';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -83,6 +89,7 @@ async function settingsPayload(person) {
   return {
     person_id: person.id,
     person_name: person.name,
+    email: person.email,
     resume_path: person.resume_path,
     documents_dir: person.documents_dir,
     documents_dir_effective: documentsDir(person),
@@ -347,6 +354,78 @@ async function handleApi(req, res, url) {
     return res.end(content);
   }
 
+  // Compose the Interested-jobs digest email for one person: recipient (their
+  // saved email), subject, and HTML/plain-text bodies with per-job feedback
+  // links. Composing only — sending is up to the caller.
+  if (req.method === 'POST' && url.pathname === '/api/interested-email') {
+    let person;
+    try {
+      person = personFromQuery(url);
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+    const body = await readBody(req);
+    try {
+      return json(res, 200, composeInterestedEmail({ personId: person.id, baseUrl: body.base_url }));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+
+  // Human-friendly preview of that email: the rendered message plus a toolbar
+  // to copy it (rich text for pasting into a compose window, or raw HTML).
+  if (req.method === 'GET' && url.pathname === '/api/interested-email/preview') {
+    let email;
+    try {
+      email = composeInterestedEmail({ personId: personFromQuery(url).id });
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(`<!doctype html><meta charset="utf-8"><body style="font-family:Segoe UI,Arial,sans-serif;padding:40px;"><h2>Can't build the email</h2><p>${err.message.replace(/</g, '&lt;')}</p></body>`);
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Email preview — ${email.person_name}</title>
+<style>
+  body { margin: 0; font-family: 'Segoe UI', Arial, sans-serif; background: #f5f6f8; }
+  .bar { position: sticky; top: 0; background: #1f2733; color: #fff; padding: 12px 20px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .bar .meta { font-size: 13px; line-height: 1.5; }
+  .bar button { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .mail { background: #fff; max-width: 720px; margin: 24px auto; padding: 28px 36px; border-radius: 10px; border: 1px solid #ddd; }
+  #copied { color: #8f8; font-size: 13px; }
+</style></head>
+<body>
+  <div class="bar">
+    <div class="meta"><strong>To:</strong> ${email.to.replace(/</g, '&lt;')}<br><strong>Subject:</strong> ${email.subject.replace(/</g, '&lt;')}</div>
+    <button onclick="copyRich()">Copy email (paste into compose window)</button>
+    <button onclick="copyRaw()">Copy raw HTML</button>
+    <span id="copied"></span>
+  </div>
+  <div class="mail" id="mail"></div>
+  <script id="payload" type="application/json">${JSON.stringify({ html: email.html, text: email.text }).replace(/</g, '\\u003c')}</script>
+  <script>
+    const payload = JSON.parse(document.getElementById('payload').textContent);
+    document.getElementById('mail').innerHTML = payload.html;
+    const flash = (msg) => {
+      document.getElementById('copied').textContent = msg;
+      setTimeout(() => { document.getElementById('copied').textContent = ''; }, 2000);
+    };
+    async function copyRich() {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([payload.html], { type: 'text/html' }),
+          'text/plain': new Blob([payload.text], { type: 'text/plain' })
+        })]);
+        flash('✓ Copied — paste into your email compose window');
+      } catch { copyRaw(); }
+    }
+    async function copyRaw() {
+      await navigator.clipboard.writeText(payload.html);
+      flash('✓ Raw HTML copied');
+    }
+  </script>
+</body></html>`);
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/stats') {
     const p = url.searchParams.get('person');
     return json(res, 200, { ...getStats({ personId: p ? Number(p) : undefined }), statuses: STATUSES, levels: LEVELS });
@@ -432,6 +511,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    if (await handleRespond(req, res, url)) return;
     return await serveStatic(res, url.pathname);
   } catch (err) {
     return json(res, 500, { error: err.message });
@@ -442,7 +522,8 @@ const server = http.createServer(async (req, res) => {
 // default 300s request timeout would kill the socket mid-generation.
 server.requestTimeout = 0;
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, HOST, () => {
   console.log(`JobTracker running at http://localhost:${PORT}`);
+  if (HOST !== '127.0.0.1') console.log(`Listening on ${HOST}; email feedback links use ${defaultBaseUrl()}`);
   console.log(`Database: ${DB_PATH}`);
 });

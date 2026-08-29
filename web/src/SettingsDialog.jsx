@@ -32,6 +32,7 @@ const SYNC_MESSAGES = {
 export default function SettingsDialog({ personId, personName, onClose, onSaved }) {
   const [settings, setSettings] = useState(null);
   const [name, setName] = useState(personName || '');
+  const [email, setEmail] = useState('');
   const [resumePath, setResumePath] = useState('');
   const [documentsDir, setDocumentsDir] = useState('');
   const [link, setLink] = useState(null);
@@ -45,6 +46,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
       .then(s => {
         setSettings(s);
         setName(s.person_name);
+        setEmail(s.email || '');
         setResumePath(s.resume_path);
         setDocumentsDir(s.documents_dir);
       })
@@ -131,7 +133,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
     setError(null);
     try {
       const path = cleanPath(resumePath);
-      await saveSettings(personId, { name, resume_path: path, documents_dir: cleanPath(documentsDir) });
+      await saveSettings(personId, { name, email: email.trim(), resume_path: path, documents_dir: cleanPath(documentsDir) });
       // A manually entered path replaces the managed snapshot — the stored
       // handle no longer describes what generation reads, so drop it.
       if (link && path !== link.managedPath) {
@@ -176,6 +178,18 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
               />
               <span className="settings-hint">
                 The resume and documents folder below apply only to this person; every person has their own.
+              </span>
+            </label>
+            <label className="span-2">
+              Email address
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="Where this person's job digest emails are addressed"
+              />
+              <span className="settings-hint">
+                Used as the recipient when generating the "Interested jobs" digest email for this person.
               </span>
             </label>
             <label className="span-2">
