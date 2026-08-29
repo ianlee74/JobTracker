@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
 import { generateJobDocuments, generateForInterested, documentsDir, hasApiCredentials } from './generate.js';
+import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 
 const server = new McpServer({
   name: 'jobtracker',
@@ -65,12 +66,19 @@ server.registerTool('add_person', {
 
 server.registerTool('update_person', {
   title: 'Update a person',
-  description: 'Rename a person. (Per-person resume/documents settings are changed with configure_document_generation.)',
+  description: 'Rename a person and/or set their email address (the recipient of their Interested-jobs digest email). (Per-person resume/documents settings are changed with configure_document_generation.)',
   inputSchema: {
     person: z.string().describe('The person\'s current name (or numeric id)'),
-    new_name: z.string().describe('The new name')
+    new_name: z.string().optional().describe('The new name'),
+    email: z.string().optional().describe('The person\'s email address (empty string to clear)')
   }
-}, async ({ person, new_name }) => ok(updatePerson(resolvePerson(person).id, { name: new_name })));
+}, async ({ person, new_name, email }) => {
+  const fields = {};
+  if (new_name !== undefined) fields.name = new_name;
+  if (email !== undefined) fields.email = email;
+  if (!Object.keys(fields).length) throw new Error('Provide new_name and/or email');
+  return ok(updatePerson(resolvePerson(person).id, fields));
+});
 
 server.registerTool('list_jobs', {
   title: 'List jobs',
@@ -203,6 +211,16 @@ server.registerTool('generate_documents', {
   if (id == null && !url) throw new Error('Provide id or url, or set all_interested: true');
   return ok(await generateJobDocuments({ id, url, personId }, { skipExisting: Boolean(skip_existing) }));
 });
+
+server.registerTool('generate_interested_email', {
+  title: 'Generate the Interested-jobs digest email',
+  description: 'Compose an email digest of one person\'s jobs in "Interested" status, addressed to that person (their saved email — set it with update_person). Each job carries a posting link, a short why-it-fits summary, and feedback links the candidate can click to report "applied", "still interested", or "not interested" (with a reason); they can also reply by email referencing each job\'s #id, in which case apply their answers with update_job. Returns { to, subject, html, text } — this tool only composes the email; send it via an email tool, showing the user a draft first.',
+  inputSchema: {
+    person: personArg,
+    base_url: z.string().optional().describe(`Base URL the feedback links point at (default ${defaultBaseUrl()}, or the JOBTRACKER_BASE_URL environment variable). Links only work on machines that can reach the JobTracker server.`)
+  }
+}, async ({ person, base_url }) =>
+  ok(composeInterestedEmail({ personId: resolvePerson(person).id, baseUrl: base_url })));
 
 server.registerTool('configure_document_generation', {
   title: 'Configure document generation',

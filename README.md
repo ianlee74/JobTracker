@@ -63,7 +63,8 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 | `update_company` | Save company info, mark it a favorite (its jobs win sort ties), or "not interested" (its jobs hide) |
 | `list_people` | The tracked candidates, with job counts and per-person config |
 | `add_person` | Add a person to track jobs for |
-| `update_person` | Rename a person |
+| `update_person` | Rename a person or set their email address |
+| `generate_interested_email` | Compose the digest email of one person's `Interested` jobs, with candidate feedback links |
 | `generate_documents` | Tailored resume + cover letter for one job, or all `Interested` jobs |
 | `configure_document_generation` | View/set one person's standard resume path and documents folder |
 
@@ -84,6 +85,24 @@ JobTracker can generate a resume and cover letter tailored to a specific posting
 Generate from the ✨ button on any job row, from **✨ Generate for Interested** in the header (batch over every `Interested` job, skipping ones that already have documents), or from Claude via the `generate_documents` MCP tool. Each job gets its own subfolder (`<id> - <company> - <title>`) containing the resume and cover letter (`.docx` or `.md`, matching the standard resume's format); the `job_documents` table stores their relative paths. Local `file://` postings are sent to the model directly; http(s) postings are fetched by the model via web fetch.
 
 The writing instructions live in `skills/tailored-resume/SKILL.md` and `skills/tailored-cover-letter/SKILL.md` — edit those files to change how the documents are written.
+
+## Interested-jobs digest email & candidate feedback
+
+JobTracker can compose an email digest of every job currently in `Interested` status, addressed to the person the jobs belong to (set their **Email address** in Settings ⚙, or via the `update_person` MCP tool). Each job in the email has a link to the posting, a short summary of why it looks like a good fit (the job's `fit` field), and three feedback links for the candidate:
+
+- **✅ I applied** — marks the job `Applied`.
+- **👍 Still interested** — notes the confirmation on the job.
+- **👎 Not interested** — opens a small form asking why (the standard rejection reasons plus free text), then marks the job `Not Moving Forward` with that reason.
+
+Feedback links carry a per-job unguessable token and are served by the web server (`/respond/<token>/…`), so clicking them updates the tracker directly — no login needed. The email also explains how to reply by email instead, referencing each job's `#id` (e.g. "Job #12: applied"), for candidates who can't reach the tracker's URL; apply those answers yourself or let Claude do it via `update_job`.
+
+The app **composes** the email but never sends it. Get it out via:
+
+- **UI**: the **✉ Email Interested** header button opens a preview with a *Copy email* button — paste into any compose window (Gmail, Outlook) as rich text.
+- **MCP**: the `generate_interested_email` tool returns `to`/`subject`/`html`/`text`, so Claude can send it through a connected email integration.
+- **REST**: `POST /api/interested-email?person=<id>`.
+
+By default the server only listens on `127.0.0.1`, so feedback links only work on the tracker machine. For a candidate on another device in your home network, start the server with `JOBTRACKER_HOST=0.0.0.0` and set `JOBTRACKER_BASE_URL` to the tracker machine's LAN address (e.g. `http://192.168.1.20:7080`) so the links in the email point somewhere reachable. Only do this on a network you trust — the app has no authentication.
 
 ## Importing old daily tracker files
 
@@ -107,7 +126,9 @@ The web server also exposes the data at `http://localhost:7080/api`:
 - `GET /api/companies` — every company with tracked jobs or saved info (incl. `favorite` and `not_interested` flags)
 - `GET|PATCH /api/company?name=<name>` — one company's info; PATCH upserts fields (`website`, `note`, `company_type`, `employee_count`, `not_interested`, `favorite`)
 - `GET /api/stats` — query param: `person` (id)
-- `GET /api/settings?person=<id>`, `PATCH /api/settings?person=<id>` — that person's document-generation settings (and `name`)
+- `GET /api/settings?person=<id>`, `PATCH /api/settings?person=<id>` — that person's document-generation settings (and `name`, `email`)
+- `POST /api/interested-email?person=<id>` — compose the Interested-jobs digest email (`{ to, subject, html, text }`); `GET /api/interested-email/preview?person=<id>` renders it with copy buttons
+- `GET|POST /respond/<token>/<action>` — candidate feedback endpoints linked from the digest email (`applied`, `interested`, `not-interested`)
 - `POST /api/jobs/:id/generate` — generate tailored resume + cover letter (body: `{ "skip_existing": true }` to no-op when both exist)
 - `GET /api/document?job=:id&kind=resume|cover_letter` — serve a generated document (`&download=1` for attachment)
 
