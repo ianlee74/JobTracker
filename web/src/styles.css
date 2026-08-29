@@ -409,6 +409,14 @@ tr:last-child td { border-bottom: none; }
    Found/Title/Actions cells keep it — theirs paints below the note row). */
 tr.main-row td:not([rowspan]) { border-bottom: none; }
 tr.note-row td { padding-top: 0; }
+
+.note-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
 tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
 
 .cell-date { white-space: nowrap; }
