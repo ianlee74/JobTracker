@@ -13,8 +13,8 @@ function PresetSelect({ value, options, placeholder, onChange }) {
   );
 }
 
-// Info page for one company: website, free-form notes, the "Not Interested"
-// flag, and the company's tracked jobs. Changes save automatically.
+// Info page for one company: website, free-form notes, the favorite star, the
+// "Not Interested" flag, and the company's tracked jobs. Changes save automatically.
 export default function CompanyPage({ company, jobs, onBack, onSave }) {
   const [website, setWebsite] = useState(company.website || '');
   const [note, setNote] = useState(company.note || '');
@@ -46,7 +46,17 @@ export default function CompanyPage({ company, jobs, onBack, onSave }) {
 
       <div className="company-card">
         <div className="company-header">
-          <h2>{company.name}</h2>
+          <h2>
+            <button
+              className={`fav-toggle${company.favorite ? ' is-favorite' : ''}`}
+              onClick={() => onSave({ favorite: !company.favorite })}
+              title={company.favorite ? 'Remove from favorites' : 'Mark as favorite — its jobs are listed first'}
+              aria-label={company.favorite ? 'Remove from favorites' : 'Mark as favorite'}
+            >
+              {company.favorite ? '★' : '☆'}
+            </button>
+            {company.name}
+          </h2>
           <label className="checkbox-label ni-toggle">
             <input
               type="checkbox"

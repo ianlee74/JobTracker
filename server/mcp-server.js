@@ -169,20 +169,21 @@ server.registerTool('delete_job', {
 
 server.registerTool('list_companies', {
   title: 'List companies',
-  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, note, not-interested flag, and job count.',
+  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, note, not-interested flag, favorite flag, and job count.',
   inputSchema: {}
 }, async () => ok(listCompanies()));
 
 server.registerTool('update_company', {
   title: 'Update company info',
-  description: 'Save notes/info about a company and/or mark it "not interested". Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked). Creates the company record if it does not exist yet.',
+  description: 'Save notes/info about a company, mark it "not interested", and/or flag it as a favorite. Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from favorite companies are listed first. Creates the company record if it does not exist yet.',
   inputSchema: {
     name: z.string().describe('Company name, exactly as it appears on its jobs'),
     website: z.string().optional().describe('Company website URL'),
     company_type: z.string().optional().describe(`Company type, ideally one of: ${COMPANY_TYPES.join(', ')} — or free text for anything else`),
     employee_count: z.string().optional().describe(`Employee count range, ideally one of: ${EMPLOYEE_COUNTS.join(', ')}`),
     note: z.string().optional().describe('Replaces the existing company note'),
-    not_interested: z.boolean().optional().describe('true hides the company\'s jobs by default; false restores them')
+    not_interested: z.boolean().optional().describe('true hides the company\'s jobs by default; false restores them'),
+    favorite: z.boolean().optional().describe('true ranks the company\'s jobs first in job listings; false removes the priority')
   }
 }, async ({ name, ...fields }) => ok(upsertCompany(name, fields)));
 

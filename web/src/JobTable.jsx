@@ -127,7 +127,7 @@ function DocLinks({ job }) {
   );
 }
 
-function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested }) {
+function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
@@ -144,6 +144,7 @@ function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, ge
         <button className="company-link" onClick={() => onOpenCompany(job.company)} title="Open company page">
           {job.company}
         </button>
+        {companyFavorite && <span className="fav-badge" title="Favorite company — its jobs are listed first">★</span>}
         {companyNotInterested && <span className="ni-badge" title="Company marked Not Interested">🚫</span>}
       </td>
       <td>{job.category}</td>
@@ -219,7 +220,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies }) {
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
   }
@@ -251,6 +252,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdi
               onGenerate={onGenerate}
               generating={generatingIds.has(job.id)}
               companyNotInterested={flaggedCompanies.has(job.company)}
+              companyFavorite={favoriteCompanies.has(job.company)}
             />
           ))}
         </tbody>

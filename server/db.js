@@ -152,6 +152,15 @@ db.exec(`
   }
 }
 
+// Migration: add a "favorite" flag to companies (jobs from favorite companies
+// are ranked first in job listings).
+{
+  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  if (!cols.includes('favorite')) {
+    db.exec('ALTER TABLE companies ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
 // Migration: add parsed salary range columns, backfilled from the salary strings.
 {
   const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
@@ -354,7 +363,8 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
     (SELECT name FROM people WHERE people.id = jobs.person_id) AS person_name
     FROM jobs`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
-  sql += ' ORDER BY date_found DESC, company ASC, id ASC';
+  // Favorite companies rank first; the previous ordering breaks ties.
+  sql += ' ORDER BY (company IN (SELECT name FROM companies WHERE favorite = 1)) DESC, date_found DESC, company ASC, id ASC';
   if (limit) { sql += ' LIMIT ?'; params.push(limit); }
   return db.prepare(sql).all(...params);
 }
@@ -470,7 +480,7 @@ export function listCompanies() {
   const counts = db.prepare('SELECT company, COUNT(*) AS n FROM jobs GROUP BY company').all();
   const result = [];
   for (const { company, n } of counts) {
-    result.push({ name: company, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, ...(byName.get(company) || {}), job_count: n });
+    result.push({ name: company, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, favorite: 0, ...(byName.get(company) || {}), job_count: n });
     byName.delete(company);
   }
   for (const row of byName.values()) result.push({ ...row, job_count: 0 });
@@ -480,10 +490,10 @@ export function listCompanies() {
 export function getCompany(name) {
   const row = db.prepare('SELECT * FROM companies WHERE name = ?').get(name);
   const count = db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company = ?').get(name);
-  return { name, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, ...(row || {}), job_count: count.n };
+  return { name, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, favorite: 0, ...(row || {}), job_count: count.n };
 }
 
-const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'not_interested'];
+const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'not_interested', 'favorite'];
 
 // Canonicalize a caller-supplied value against a preset list (case-insensitive);
 // values that don't match any preset are kept as given.

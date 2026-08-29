@@ -59,6 +59,8 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 | `update_job` | Change status, notes (replace or append), salary, etc. |
 | `delete_job` | Remove an entry (prefer status "Not Moving Forward") |
 | `get_summary` | Counts by status + latest find date (optionally per person) |
+| `list_companies` | Every company with tracked jobs or saved info, incl. favorite / not-interested flags |
+| `update_company` | Save company info, mark it a favorite (its jobs list first), or "not interested" (its jobs hide) |
 | `list_people` | The tracked candidates, with job counts and per-person config |
 | `add_person` | Add a person to track jobs for |
 | `update_person` | Rename a person |
@@ -102,6 +104,8 @@ The web server also exposes the data at `http://localhost:7080/api`:
 - `POST /api/jobs` — body: job object or array (requires `title`, `company`, `url`; each job may carry `person_id`, otherwise `?person=<id>` applies)
 - `GET /api/jobs/:id`, `PATCH /api/jobs/:id`, `DELETE /api/jobs/:id`
 - `GET /api/people`, `POST /api/people`, `GET|PATCH|DELETE /api/people/:id` — the tracked candidates (delete requires the person to have no jobs)
+- `GET /api/companies` — every company with tracked jobs or saved info (incl. `favorite` and `not_interested` flags)
+- `GET|PATCH /api/company?name=<name>` — one company's info; PATCH upserts fields (`website`, `note`, `company_type`, `employee_count`, `not_interested`, `favorite`)
 - `GET /api/stats` — query param: `person` (id)
 - `GET /api/settings?person=<id>`, `PATCH /api/settings?person=<id>` — that person's document-generation settings (and `name`)
 - `POST /api/jobs/:id/generate` — generate tailored resume + cover letter (body: `{ "skip_existing": true }` to no-op when both exist)
