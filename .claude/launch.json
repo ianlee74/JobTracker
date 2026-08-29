@@ -7,6 +7,12 @@
       "runtimeArgs": ["start"],
       "port": 7080,
       "autoPort": true
+    },
+    {
+      "name": "jobtracker-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
     }
   ]
 }
