@@ -153,7 +153,7 @@ db.exec(`
 }
 
 // Migration: add a "favorite" flag to companies (jobs from favorite companies
-// are ranked first in job listings).
+// are prioritized within the job list's sort order).
 {
   const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
   if (!cols.includes('favorite')) {
@@ -363,8 +363,8 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
     (SELECT name FROM people WHERE people.id = jobs.person_id) AS person_name
     FROM jobs`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
-  // Favorite companies rank first; the previous ordering breaks ties.
-  sql += ' ORDER BY (company IN (SELECT name FROM companies WHERE favorite = 1)) DESC, date_found DESC, company ASC, id ASC';
+  // Newest first; favorite companies win ties within a date.
+  sql += ' ORDER BY date_found DESC, (company IN (SELECT name FROM companies WHERE favorite = 1)) DESC, company ASC, id ASC';
   if (limit) { sql += ' LIMIT ?'; params.push(limit); }
   return db.prepare(sql).all(...params);
 }

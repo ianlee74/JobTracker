@@ -60,7 +60,7 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 | `delete_job` | Remove an entry (prefer status "Not Moving Forward") |
 | `get_summary` | Counts by status + latest find date (optionally per person) |
 | `list_companies` | Every company with tracked jobs or saved info, incl. favorite / not-interested flags |
-| `update_company` | Save company info, mark it a favorite (its jobs list first), or "not interested" (its jobs hide) |
+| `update_company` | Save company info, mark it a favorite (its jobs win sort ties), or "not interested" (its jobs hide) |
 | `list_people` | The tracked candidates, with job counts and per-person config |
 | `add_person` | Add a person to track jobs for |
 | `update_person` | Rename a person |
