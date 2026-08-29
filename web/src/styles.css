@@ -612,6 +612,8 @@ tr:last-child td { border-bottom: none; }
 
 .ni-badge { font-size: 11px; margin-left: 5px; cursor: default; }
 
+.fav-badge { color: #f59e0b; margin-left: 5px; cursor: default; }
+
 .toggle-label {
   display: flex;
   align-items: center;
@@ -641,7 +643,19 @@ tr:last-child td { border-bottom: none; }
   gap: 16px;
   flex-wrap: wrap;
 }
-.company-header h2 { margin: 0; font-size: 18px; }
+.company-header h2 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 6px; }
+
+.fav-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.fav-toggle:hover { color: #f59e0b; }
+.fav-toggle.is-favorite { color: #f59e0b; }
 
 .ni-toggle { font-size: 13px; font-weight: 600; color: var(--text-muted); }
 

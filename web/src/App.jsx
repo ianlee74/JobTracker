@@ -463,6 +463,12 @@ export default function App() {
     [companies]
   );
 
+  // Favorite companies — their jobs rank first, whatever the sort column.
+  const favoriteCompanies = useMemo(
+    () => new Set(companies.filter(c => c.favorite).map(c => c.name)),
+    [companies]
+  );
+
   const visibleJobs = useMemo(() => {
     const text = textFilter.trim().toLowerCase();
     const dateMin =
@@ -485,11 +491,12 @@ export default function App() {
     const cmp = COMPARATORS[sort.key] || COMPARATORS.date_found;
     const sign = sort.dir === 'asc' ? 1 : -1;
     return [...filtered].sort((a, b) => {
-      const result = cmp(a, b) * sign;
+      const favDiff = favoriteCompanies.has(b.company) - favoriteCompanies.has(a.company);
+      const result = favDiff || cmp(a, b) * sign;
       // Stable, sensible tie-break: newest first, then company.
       return result || b.date_found.localeCompare(a.date_found) || a.company.localeCompare(b.company);
     });
-  }, [jobs, statusFilters, levelFilter, textFilter, dateFilter, customDate, sort, showNotInterested, flaggedCompanies]);
+  }, [jobs, statusFilters, levelFilter, textFilter, dateFilter, customDate, sort, showNotInterested, flaggedCompanies, favoriteCompanies]);
 
   // Tile counts match the jobs that are actually reachable in the list, so
   // they exclude not-interested companies unless those are being shown.
@@ -653,6 +660,7 @@ export default function App() {
         onGenerate={handleGenerateOne}
         generatingIds={generatingIds}
         flaggedCompanies={flaggedCompanies}
+        favoriteCompanies={favoriteCompanies}
       />
       )}
 
