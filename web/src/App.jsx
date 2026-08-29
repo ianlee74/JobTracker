@@ -463,7 +463,7 @@ export default function App() {
     [companies]
   );
 
-  // Favorite companies — their jobs rank first, whatever the sort column.
+  // Favorite companies — their jobs win ties within the chosen sort order.
   const favoriteCompanies = useMemo(
     () => new Set(companies.filter(c => c.favorite).map(c => c.name)),
     [companies]
@@ -491,8 +491,9 @@ export default function App() {
     const cmp = COMPARATORS[sort.key] || COMPARATORS.date_found;
     const sign = sort.dir === 'asc' ? 1 : -1;
     return [...filtered].sort((a, b) => {
+      // The chosen column sort is primary; favorite companies win ties within it.
       const favDiff = favoriteCompanies.has(b.company) - favoriteCompanies.has(a.company);
-      const result = favDiff || cmp(a, b) * sign;
+      const result = cmp(a, b) * sign || favDiff;
       // Stable, sensible tie-break: newest first, then company.
       return result || b.date_found.localeCompare(a.date_found) || a.company.localeCompare(b.company);
     });
