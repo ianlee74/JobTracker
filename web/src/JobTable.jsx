@@ -232,7 +232,10 @@ function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenera
     <React.Fragment>
       {mainRow}
       <tr className="note-row">
-        <td colSpan={5}><NoteInput job={job} onUpdate={onUpdate} /></td>
+        <td colSpan={5}>
+          <div className="note-label">Notes</div>
+          <NoteInput job={job} onUpdate={onUpdate} />
+        </td>
       </tr>
     </React.Fragment>
   );
