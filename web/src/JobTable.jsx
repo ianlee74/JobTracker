@@ -127,15 +127,32 @@ function DocLinks({ job }) {
   );
 }
 
-function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
+// On wide screens each job renders as two rows: the note gets a full-width
+// cell below Company → Status (Found/Title/Actions span both rows), so it has
+// room to breathe. Narrow screens keep the single-row layout with a Note column.
+function useWideLayout() {
+  const [wide, setWide] = useState(() => window.matchMedia(WIDE_LAYOUT_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(WIDE_LAYOUT_QUERY);
+    const onChange = e => setWide(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return wide;
+}
+
+const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
+
+function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
+  const span = wide ? 2 : undefined;
 
-  return (
-    <tr>
-      <td className="cell-date">{job.date_found}</td>
-      <td className="cell-title">
+  const mainRow = (
+    <tr className={wide ? 'main-row' : undefined}>
+      <td className="cell-date" rowSpan={span}>{job.date_found}</td>
+      <td className="cell-title" rowSpan={span}>
         <a href={jobHref(job.url)} target="_blank" rel="noopener noreferrer">{job.title}</a>
         {job.fit && <div className="fit">{job.fit}</div>}
         <DocLinks job={job} />
@@ -177,8 +194,8 @@ function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, ge
         </select>
         {job.status === 'Not Moving Forward' && <RejectionReason job={job} onUpdate={onUpdate} />}
       </td>
-      <td><NoteInput job={job} onUpdate={onUpdate} /></td>
-      <td className="cell-actions">
+      {!wide && <td><NoteInput job={job} onUpdate={onUpdate} /></td>}
+      <td className="cell-actions" rowSpan={span}>
         <button
           className={`edit-btn gen-btn ${generating ? 'busy' : ''}`}
           title={generating
@@ -208,6 +225,17 @@ function JobRow({ job, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, ge
       </td>
     </tr>
   );
+
+  if (!wide) return mainRow;
+
+  return (
+    <React.Fragment>
+      {mainRow}
+      <tr className="note-row">
+        <td colSpan={5}><NoteInput job={job} onUpdate={onUpdate} /></td>
+      </tr>
+    </React.Fragment>
+  );
 }
 
 function SortableHeader({ label, sortKey, sort, onSort, width }) {
@@ -221,6 +249,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
 }
 
 export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies }) {
+  const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
   }
@@ -230,13 +259,13 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdi
         <thead>
           <tr>
             <SortableHeader label="Found" sortKey="date_found" sort={sort} onSort={onSort} width="8%" />
-            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width="23%" />
-            <SortableHeader label="Company" sortKey="company" sort={sort} onSort={onSort} width="11%" />
-            <SortableHeader label="Category" sortKey="category" sort={sort} onSort={onSort} width="11%" />
+            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width={wide ? '26%' : '23%'} />
+            <SortableHeader label="Company" sortKey="company" sort={sort} onSort={onSort} width={wide ? '13%' : '11%'} />
+            <SortableHeader label="Category" sortKey="category" sort={sort} onSort={onSort} width={wide ? '12%' : '11%'} />
             <SortableHeader label="Level" sortKey="level" sort={sort} onSort={onSort} width="9%" />
-            <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width="11%" />
-            <SortableHeader label="Status" sortKey="status" sort={sort} onSort={onSort} width="10%" />
-            <th style={{ width: '10%' }}>Note</th>
+            <SortableHeader label="Salary" sortKey="salary" sort={sort} onSort={onSort} width={wide ? '12%' : '11%'} />
+            <SortableHeader label="Status" sortKey="status" sort={sort} onSort={onSort} width={wide ? '13%' : '10%'} />
+            {!wide && <th style={{ width: '10%' }}>Note</th>}
             <th style={{ width: '7%' }}></th>
           </tr>
         </thead>
@@ -245,6 +274,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdi
             <JobRow
               key={job.id}
               job={job}
+              wide={wide}
               onUpdate={onUpdate}
               onDelete={onDelete}
               onEdit={onEdit}

@@ -404,6 +404,13 @@ td {
 
 tr:last-child td { border-bottom: none; }
 
+/* Wide layout: each job is a main row plus a note row. The separator belongs
+   under the note row, so the main row's own cells drop theirs (the rowspanned
+   Found/Title/Actions cells keep it — theirs paints below the note row). */
+tr.main-row td:not([rowspan]) { border-bottom: none; }
+tr.note-row td { padding-top: 0; }
+tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
+
 .cell-date { white-space: nowrap; }
 
 .cell-title a {
