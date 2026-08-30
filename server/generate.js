@@ -3,6 +3,7 @@ import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { XMLValidator } from 'fast-xml-parser';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { getJob, listJobs, getCompany, getPerson, getJobDocument, upsertJobDocument, DB_PATH } from './db.js';
@@ -316,13 +317,19 @@ export async function saveUploadedDocument(job, kind, originalName, buffer) {
 // Generate the tailored resume and cover letter for one job, using the owning
 // person's standard resume and documents folder. With skipExisting, jobs that
 // already have both documents are skipped (used by batch runs so a re-run
-// only fills gaps).
+// only fills gaps). A document only counts as existing when its file is still
+// on disk — deleting the files is how a user asks for fresh ones, and the DB
+// row alone must not keep the job skipped.
 export async function generateJobDocuments({ id, url, personId }, { skipExisting = false } = {}) {
   const job = getJob({ id, url, personId });
   if (!job) throw new Error('Job not found');
   const person = getPerson(job.person_id);
   if (!person) throw new Error(`Job ${job.id} belongs to an unknown person (id ${job.person_id})`);
-  if (skipExisting && getJobDocument(job.id, 'resume') && getJobDocument(job.id, 'cover_letter')) {
+  const hasDocument = (kind) => {
+    const doc = getJobDocument(job.id, kind);
+    return doc && existsSync(path.resolve(documentsDir(person), doc.path));
+  };
+  if (skipExisting && hasDocument('resume') && hasDocument('cover_letter')) {
     return { job_id: job.id, title: job.title, company: job.company, skipped: true, documents: [] };
   }
 
