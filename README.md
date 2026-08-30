@@ -70,7 +70,7 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 
 Tools that need a person (`add_jobs`, `configure_document_generation`, …) take a `person` argument — the person's name. It can be omitted while only one person is tracked. Job posting URLs are unique **per person**, so two people can track the same posting independently; URL-based lookups accept `person` to disambiguate.
 
-Statuses: `new`, `Interested`, `Applied`, `Interviewing`, `Offer`, `Not Moving Forward`.
+Statuses: `new`, `Interested`, `Applied`, `Interviewing`, `Offer`, `Not Moving Forward`, `No Longer Available`.
 
 Every job also has a seniority **level** used for grouping and filtering: `Senior`, `Staff`, `Principal`, `Lead`, `Manager`, `Senior Manager`, `Director`, `Senior Director`, `VP`, `Executive`, or `Other`. `add_jobs` accepts an optional `level`; when omitted, the level is classified automatically from the job title (e.g. "Sr. Engineering Manager, Platform" → `Senior Manager`). Misclassifications can be corrected inline in the UI's Level column or via `update_job`.
 
