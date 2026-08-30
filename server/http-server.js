@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
-import { generateJobDocuments, saveUploadedDocument, documentsDir, hasApiCredentials } from './generate.js';
+import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { handleRespond } from './respond.js';
 import { handleAuth, requestUser, authEnabled, checkMcpToken, mcpTokenConfigured } from './auth.js';
@@ -548,6 +548,21 @@ async function handleApi(req, res, url, user) {
     if (!body.length) return json(res, 400, { error: 'The uploaded file is empty' });
     try {
       return json(res, 200, await saveUploadedDocument(job, kind, path.basename(url.searchParams.get('name') || ''), body));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+
+  // Delete a job's documents (files + DB rows) — the required step before
+  // regenerating, so existing documents are never silently overwritten.
+  if (req.method === 'DELETE' && parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 4 && parts[3] === 'documents') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
+    const job = getJob({ id });
+    // 404 (not 403) so other people's job ids aren't confirmed to exist.
+    if (!job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'Job not found' });
+    try {
+      return json(res, 200, { deleted: await deleteJobDocumentFiles(job) });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }

@@ -127,7 +127,9 @@ function RejectionReason({ job, onUpdate, onDone }) {
 // "Resume · Cover letter" links once documents have been generated for a job.
 // They open inline; the ⬇ next to each downloads it with a friendly filename,
 // and the ⬆ uploads a hand-customized file that replaces the generated one.
-function DocLinks({ job, onUpload }) {
+// The 🗑 at the end deletes both documents — the required step before ✨ can
+// generate fresh ones.
+function DocLinks({ job, onUpload, onDelete }) {
   const fileInput = useRef(null);
   const uploadKind = useRef(null);
   const ORDER = ['resume', 'cover_letter'];
@@ -158,6 +160,16 @@ function DocLinks({ job, onUpload }) {
           </button>
         </span>
       ))}
+      <button
+        type="button"
+        className="doc-delete"
+        title="Delete these documents (required before regenerating)"
+        onClick={() => {
+          if (window.confirm(`Delete the generated documents for "${job.title}" at ${job.company}?\n\nYou can then generate fresh ones with ✨.`)) onDelete(job);
+        }}
+      >
+        🗑
+      </button>
       <input
         ref={fileInput}
         type="file"
@@ -188,7 +200,7 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
@@ -200,7 +212,7 @@ function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, 
       <td className="cell-title" rowSpan={span}>
         <a href={jobHref(job.url)} target="_blank" rel="noopener noreferrer">{job.title}</a>
         {job.fit && <div className="fit">{job.fit}</div>}
-        <DocLinks job={job} onUpload={onUploadDocument} />
+        <DocLinks job={job} onUpload={onUploadDocument} onDelete={onDeleteDocuments} />
       </td>
       <td>
         <button className="company-link" onClick={() => onOpenCompany(job.company)} title="Open company page">
@@ -256,8 +268,10 @@ function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, 
           className={`edit-btn gen-btn ${generating ? 'busy' : ''}`}
           title={generating
             ? 'Generating documents… (this takes a few minutes)'
-            : `${job.doc_kinds ? 'Regenerate' : 'Generate'} a tailored resume & cover letter with Claude`}
-          disabled={generating}
+            : job.doc_kinds
+              ? 'This job already has documents — delete them (🗑 next to the document links) to generate fresh ones'
+              : 'Generate a tailored resume & cover letter with Claude'}
+          disabled={generating || Boolean(job.doc_kinds)}
           onClick={() => onGenerate(job)}
         >
           {generating ? '⏳' : '✨'}
@@ -323,7 +337,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -358,6 +372,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, o
               onOpenCompany={onOpenCompany}
               onGenerate={onGenerate}
               onUploadDocument={onUploadDocument}
+              onDeleteDocuments={onDeleteDocuments}
               generating={generatingIds.has(job.id)}
               companyNotInterested={flaggedCompanies.has(job.company)}
               companyFavorite={favoriteCompanies.has(job.company)}

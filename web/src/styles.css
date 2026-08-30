@@ -784,7 +784,8 @@ tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
 .doc-links a { color: var(--accent); text-decoration: none; }
 .doc-links a:hover { text-decoration: underline; }
 .doc-dl { font-size: 11px; }
-.doc-upload {
+.doc-upload,
+.doc-delete {
   border: none;
   background: none;
   padding: 0;
@@ -793,6 +794,8 @@ tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
   color: var(--accent);
 }
 .doc-upload:hover { text-decoration: underline; }
+.doc-delete { filter: grayscale(1); opacity: 0.65; }
+.doc-delete:hover { filter: none; opacity: 1; }
 
 .settings-form { max-width: 560px; }
 .settings-hint {
