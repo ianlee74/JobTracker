@@ -553,16 +553,21 @@ async function handleApi(req, res, url, user) {
     }
   }
 
-  // Delete a job's documents (files + DB rows) — the required step before
-  // regenerating, so existing documents are never silently overwritten.
+  // Delete a job's documents (files + DB rows) — one kind via ?kind=, or both
+  // without it. The required step before regenerating, so existing documents
+  // are never silently overwritten.
   if (req.method === 'DELETE' && parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 4 && parts[3] === 'documents') {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
     const job = getJob({ id });
     // 404 (not 403) so other people's job ids aren't confirmed to exist.
     if (!job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'Job not found' });
+    const kind = url.searchParams.get('kind') || undefined;
+    if (kind && kind !== 'resume' && kind !== 'cover_letter') {
+      return json(res, 400, { error: 'kind must be "resume" or "cover_letter"' });
+    }
     try {
-      return json(res, 200, { deleted: await deleteJobDocumentFiles(job) });
+      return json(res, 200, { deleted: await deleteJobDocumentFiles(job, kind) });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }

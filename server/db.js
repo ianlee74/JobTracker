@@ -391,8 +391,9 @@ export function upsertJobDocument(jobId, kind, relPath) {
   return getJobDocument(jobId, kind);
 }
 
-export function deleteJobDocuments(jobId) {
-  db.prepare('DELETE FROM job_documents WHERE job_id = ?').run(jobId);
+export function deleteJobDocuments(jobId, kind) {
+  if (kind) db.prepare('DELETE FROM job_documents WHERE job_id = ? AND kind = ?').run(jobId, kind);
+  else db.prepare('DELETE FROM job_documents WHERE job_id = ?').run(jobId);
 }
 
 export function listJobs({ personId, status, company, level, q, since, limit, excludeNotInterestedCompanies } = {}) {

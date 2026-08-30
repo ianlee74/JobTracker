@@ -124,52 +124,93 @@ function RejectionReason({ job, onUpdate, onDone }) {
   );
 }
 
-// "Resume · Cover letter" links once documents have been generated for a job.
-// They open inline; the ⬇ next to each downloads it with a friendly filename,
-// and the ⬆ uploads a hand-customized file that replaces the generated one.
-// The 🗑 at the end deletes both documents — the required step before ✨ can
-// generate fresh ones.
-function DocLinks({ job, onUpload, onDelete }) {
-  const fileInput = useRef(null);
-  const uploadKind = useRef(null);
-  const ORDER = ['resume', 'cover_letter'];
-  const kinds = (job.doc_kinds || '').split(',').filter(Boolean)
-    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
-  if (!kinds.length) return null;
-  const LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
+const DOC_LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
 
-  const pickFile = (kind) => {
-    uploadKind.current = kind;
-    fileInput.current.value = ''; // re-selecting the same file still fires change
-    fileInput.current.click();
+// One document's control: clicking the name opens a small menu with Open,
+// Download, Upload replacement, and Delete. Delete removes just this
+// document, freeing ✨ to regenerate it.
+function DocMenu({ job, kind, onUpload, onDelete }) {
+  // null = closed; when open, the fixed-position coordinates of the menu.
+  // Fixed positioning escapes the table wrapper's scroll clipping, which
+  // would otherwise cut the menu off on the last rows.
+  const [menuPos, setMenuPos] = useState(null);
+  const open = menuPos !== null;
+  const wrapRef = useRef(null);
+  const fileInput = useRef(null);
+  const label = DOC_LABELS[kind] || kind;
+
+  const toggle = () => {
+    if (open) return setMenuPos(null);
+    const r = wrapRef.current.getBoundingClientRect();
+    // Open upward when there's no room below the button.
+    const flip = r.bottom + 150 > window.innerHeight;
+    setMenuPos({ left: r.left, ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) });
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (!wrapRef.current?.contains(e.target)) setMenuPos(null);
+    };
+    const closeNow = () => setMenuPos(null);
+    document.addEventListener('mousedown', close);
+    // A fixed-position menu doesn't follow its button — close on any scroll
+    // (capture catches the table wrapper's own scrolling) or resize.
+    window.addEventListener('scroll', closeNow, true);
+    window.addEventListener('resize', closeNow);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      window.removeEventListener('scroll', closeNow, true);
+      window.removeEventListener('resize', closeNow);
+    };
+  }, [open]);
+
+  const closeMenu = () => setMenuPos(null);
+
   return (
-    <div className="doc-links">
-      📄{kinds.map(kind => (
-        <span key={kind} className="doc-link-pair">
-          <a href={documentUrl(job.id, kind)} target="_blank" rel="noopener noreferrer">{LABELS[kind] || kind}</a>
-          <a href={documentUrl(job.id, kind, true)} title={`Download ${(LABELS[kind] || kind).toLowerCase()}`} className="doc-dl">⬇</a>
+    <span className="doc-menu-wrap" ref={wrapRef}>
+      <button type="button" className="doc-menu-btn" onClick={toggle}>
+        {label} <span className="multi-select-caret">▾</span>
+      </button>
+      {open && (
+        <div className="doc-menu" style={menuPos}>
+          <a
+            className="doc-menu-item"
+            href={documentUrl(job.id, kind)}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={closeMenu}
+          >
+            Open
+          </a>
+          <a className="doc-menu-item" href={documentUrl(job.id, kind, true)} onClick={closeMenu}>
+            Download
+          </a>
           <button
             type="button"
-            className="doc-upload"
-            title={`Upload your edited ${(LABELS[kind] || kind).toLowerCase()} to replace this one`}
-            onClick={() => pickFile(kind)}
+            className="doc-menu-item"
+            onClick={() => {
+              closeMenu();
+              fileInput.current.value = ''; // re-selecting the same file still fires change
+              fileInput.current.click();
+            }}
           >
-            ⬆
+            Upload replacement…
           </button>
-        </span>
-      ))}
-      <button
-        type="button"
-        className="doc-delete"
-        title="Delete these documents (required before regenerating)"
-        onClick={() => {
-          if (window.confirm(`Delete the generated documents for "${job.title}" at ${job.company}?\n\nYou can then generate fresh ones with ✨.`)) onDelete(job);
-        }}
-      >
-        🗑
-      </button>
+          <button
+            type="button"
+            className="doc-menu-item doc-menu-danger"
+            onClick={() => {
+              closeMenu();
+              if (window.confirm(`Delete the ${label.toLowerCase()} for "${job.title}" at ${job.company}?\n\nYou can then generate a fresh one with ✨.`)) {
+                onDelete(job, kind);
+              }
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
       <input
         ref={fileInput}
         type="file"
@@ -177,9 +218,24 @@ function DocLinks({ job, onUpload, onDelete }) {
         accept=".docx,.pdf,.md,.txt,.html"
         onChange={e => {
           const file = e.target.files[0];
-          if (file) onUpload(job, uploadKind.current, file);
+          if (file) onUpload(job, kind, file);
         }}
       />
+    </span>
+  );
+}
+
+// A menu per generated document once any exist for a job.
+function DocLinks({ job, onUpload, onDelete }) {
+  const ORDER = ['resume', 'cover_letter'];
+  const kinds = (job.doc_kinds || '').split(',').filter(Boolean)
+    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  if (!kinds.length) return null;
+  return (
+    <div className="doc-links">
+      {kinds.map(kind => (
+        <DocMenu key={kind} job={job} kind={kind} onUpload={onUpload} onDelete={onDelete} />
+      ))}
     </div>
   );
 }
@@ -205,6 +261,8 @@ function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, 
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
   const span = wide ? 2 : undefined;
+  const docKinds = (job.doc_kinds || '').split(',').filter(Boolean);
+  const missingDocs = ['resume', 'cover_letter'].filter(k => !docKinds.includes(k));
 
   const mainRow = (
     <tr className={wide ? 'main-row' : undefined}>
@@ -268,10 +326,12 @@ function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, 
           className={`edit-btn gen-btn ${generating ? 'busy' : ''}`}
           title={generating
             ? 'Generating documents… (this takes a few minutes)'
-            : job.doc_kinds
-              ? 'This job already has documents — delete them (🗑 next to the document links) to generate fresh ones'
-              : 'Generate a tailored resume & cover letter with Claude'}
-          disabled={generating || Boolean(job.doc_kinds)}
+            : missingDocs.length === 0
+              ? "This job already has both documents — delete one from its menu to regenerate it"
+              : missingDocs.length === 2
+                ? 'Generate a tailored resume & cover letter with Claude'
+                : `Generate the missing ${DOC_LABELS[missingDocs[0]].toLowerCase()} with Claude`}
+          disabled={generating || missingDocs.length === 0}
           onClick={() => onGenerate(job)}
         >
           {generating ? '⏳' : '✨'}

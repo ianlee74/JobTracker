@@ -388,8 +388,14 @@ export default function App() {
     try {
       const result = await generateDocuments(job.id, { skip_existing: skipExisting });
       if (result.documents?.length) {
-        const kinds = result.documents.map(d => d.kind).join(',');
-        setJobs(prev => prev.map(j => (j.id === job.id ? { ...j, doc_kinds: kinds } : j)));
+        // Only missing documents are generated, so merge with what the job
+        // already had rather than replacing it.
+        setJobs(prev => prev.map(j => {
+          if (j.id !== job.id) return j;
+          const kinds = new Set((j.doc_kinds || '').split(',').filter(Boolean));
+          for (const d of result.documents) kinds.add(d.kind);
+          return { ...j, doc_kinds: [...kinds].join(',') };
+        }));
         flashSaved();
       }
       return result;
@@ -417,7 +423,7 @@ export default function App() {
   };
 
   // Replace a job's generated resume/cover letter with a hand-customized file
-  // picked via the ⬆ next to its document link.
+  // picked via "Upload replacement…" in its document menu.
   const handleUploadDocument = async (job, kind, file) => {
     setError(null);
     try {
@@ -428,13 +434,15 @@ export default function App() {
     }
   };
 
-  // Delete a job's documents (🗑 next to its document links, already
-  // confirmed there) — the required step before generating fresh ones.
-  const handleDeleteDocuments = async (job) => {
+  // Delete one of a job's documents ("Delete" in its menu, already confirmed
+  // there) — the required step before ✨ can generate a fresh one.
+  const handleDeleteDocuments = async (job, kind) => {
     setError(null);
     try {
-      await deleteJobDocuments(job.id);
-      setJobs(prev => prev.map(j => (j.id === job.id ? { ...j, doc_kinds: '' } : j)));
+      await deleteJobDocuments(job.id, kind);
+      setJobs(prev => prev.map(j => (j.id === job.id
+        ? { ...j, doc_kinds: (j.doc_kinds || '').split(',').filter(k => k && k !== kind).join(',') }
+        : j)));
       flashSaved();
     } catch (err) {
       setError(`${job.title} (${job.company}): ${err.message}`);
