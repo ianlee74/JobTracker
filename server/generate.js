@@ -202,27 +202,95 @@ Output the complete contents of the new document's word/document.xml (Wordproces
 - All visible text goes in <w:t> elements; escape & < > as XML entities, and add xml:space="preserve" to any <w:t> whose text starts or ends with a space.`;
 
 // Well-formedness gate for generated document.xml — Word refuses files with
-// broken XML, so catch it here (and let the model retry once) instead.
+// broken XML, so catch it here (and let the model retry) instead. The
+// returned problem includes a snippet around the offending spot so retries
+// (and humans reading the error) can see what was actually wrong.
 function docXmlProblem(xml) {
   if (!/<w:document[\s>]/.test(xml)) return 'the output is not a <w:document> WordprocessingML file';
   const result = XMLValidator.validate(xml);
-  return result === true ? null : `the XML is not well-formed: ${result.err.msg} (line ${result.err.line})`;
+  if (result === true) return null;
+  const { msg, line, col } = result.err;
+  const errLine = xml.split('\n')[line - 1] ?? '';
+  const at = Number.isInteger(col) ? Math.max(0, col - 60) : 0;
+  const snippet = errLine.slice(at, at + 120).trim();
+  return `the XML is not well-formed: ${msg} (line ${line})${snippet ? ` near: …${snippet}…` : ''}`;
 }
 
 function stripFences(text) {
   return text.replace(/^```[a-z]*\s*\n/i, '').replace(/\n```\s*$/, '').trim();
 }
 
+// XML defines only five named entities; anything else the model borrows from
+// HTML (or a bare &) makes the file ill-formed. Word-safe numeric equivalents
+// for the HTML entities models actually emit in resumes.
+const HTML_ENTITY_CODES = {
+  nbsp: 160, copy: 169, reg: 174, deg: 176, middot: 183, trade: 8482,
+  ndash: 8211, mdash: 8212, lsquo: 8216, rsquo: 8217, ldquo: 8220,
+  rdquo: 8221, bull: 8226, hellip: 8230
+};
+const XML_ENTITIES = new Set(['amp', 'lt', 'gt', 'quot', 'apos']);
+
+// Mechanical cleanup of the damage models most often inflict on otherwise
+// good WordprocessingML: prose/fences around the document, HTML-only named
+// entities, and unescaped ampersands. Conservative by construction — valid
+// XML passes through unchanged — so it runs on every attempt before
+// validation, saving a retry (and its API cost) when the output is trivially
+// fixable.
+export function repairDocxXml(text) {
+  // Keep only the document element itself: everything before <w:document> or
+  // after </w:document> is commentary the model added despite instructions.
+  const start = text.search(/<w:document[\s>]/);
+  const end = text.lastIndexOf('</w:document>');
+  let xml = start >= 0 && end > start ? text.slice(start, end + '</w:document>'.length) : text;
+  // Rewrite entity references: numeric and the five XML ones pass through,
+  // known HTML names become numeric, and any other & is escaped.
+  xml = xml.replace(/&(#\d+;|#x[0-9a-fA-F]+;|[a-zA-Z][a-zA-Z0-9]*;)?/g, (match, ref) => {
+    if (!ref) return '&amp;';
+    if (ref.startsWith('#')) return match;
+    const name = ref.slice(0, -1);
+    if (XML_ENTITIES.has(name)) return match;
+    const code = HTML_ENTITY_CODES[name.toLowerCase()];
+    return code ? `&#${code};` : `&amp;${name};`;
+  });
+  if (!xml.startsWith('<?xml')) xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml;
+  return xml;
+}
+
+// Rejected model output is undiagnosable unless it's persisted somewhere: on
+// each failed attempt, save the raw output, the repaired version the
+// validator actually saw, and the validator's complaint to data/debug/
+// (overwritten per label+attempt, so the folder never grows unbounded).
+async function saveRejectedXml(label, attempt, raw, repaired, problem) {
+  const dir = path.join(path.dirname(DB_PATH), 'debug');
+  const slug = `invalid-${clean(label || 'document').replace(/\s+/g, '-')}-attempt${attempt}`;
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, `${slug}-raw.xml`), raw, 'utf8');
+    await writeFile(path.join(dir, `${slug}-repaired.xml`), repaired, 'utf8');
+    await writeFile(path.join(dir, `${slug}.error.txt`),
+      `${new Date().toISOString()}\n${label}\nAttempt ${attempt} rejected because ${problem}\n` +
+      'The line/column refer to the -repaired.xml file (what the validator saw); -raw.xml is the model output before mechanical repair.\n',
+      'utf8');
+  } catch (err) {
+    console.error(`[generate] could not save rejected XML for ${label}: ${err.message}`);
+  }
+  console.error(`[generate] ${label} attempt ${attempt} rejected because ${problem} — output saved in ${dir}\\${slug}-*.xml`);
+}
+
+const DOCX_ATTEMPTS = 3;
+
 async function generateDocxXml(args) {
   let feedback = '';
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let xml = stripFences(await generateDocument({ ...args, instruction: args.instruction + feedback }));
-    if (!xml.startsWith('<?xml')) xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml;
-    const problem = docXmlProblem(xml);
+  let problem;
+  for (let attempt = 1; attempt <= DOCX_ATTEMPTS; attempt++) {
+    const raw = await generateDocument({ ...args, instruction: args.instruction + feedback });
+    const xml = repairDocxXml(stripFences(raw));
+    problem = docXmlProblem(xml);
     if (!problem) return xml;
+    await saveRejectedXml(args.debugLabel, attempt, raw, xml, problem);
     feedback = `\n\n# Correction\n\nA previous attempt at this document was rejected because ${problem}. Produce the complete, well-formed document.xml this time.`;
   }
-  throw new Error('The generated Word XML was not well-formed after two attempts.');
+  throw new Error(`The generated Word XML was not well-formed after ${DOCX_ATTEMPTS} attempts — last problem: ${problem} (rejected output saved in ${path.join(path.dirname(DB_PATH), 'debug')}).`);
 }
 
 // New .docx = the original resume's package with its document.xml swapped out,
@@ -237,14 +305,17 @@ async function buildDocx(originalBuffer, documentXml) {
 // timeouts on long generations, and continues through pause_turn (web_fetch).
 async function generateDocument({ contextBlocks, tools, instruction, model = MODEL, system = SYSTEM_PROMPT }) {
   const messages = [{ role: 'user', content: [...contextBlocks, { type: 'text', text: instruction }] }];
+  // Server-side fallback keeps generation alive when the primary model is
+  // overloaded, but not every model a skill can select supports the
+  // parameter (the API 400s) — drop it for this call and retry when it does.
+  let useFallback = true;
   for (let attempt = 0; attempt < 5; attempt++) {
     let response;
     try {
       response = await getClient().beta.messages.stream({
         model,
         max_tokens: 64000,
-        betas: ['server-side-fallback-2026-06-01'],
-        fallbacks: [{ model: 'claude-opus-4-8' }],
+        ...(useFallback ? { betas: ['server-side-fallback-2026-06-01'], fallbacks: [{ model: 'claude-opus-4-8' }] } : {}),
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         ...(tools ? { tools } : {}),
         messages
@@ -252,6 +323,10 @@ async function generateDocument({ contextBlocks, tools, instruction, model = MOD
     } catch (err) {
       if (err instanceof Anthropic.AuthenticationError || /resolve authentication/i.test(err.message)) {
         throw new Error("No working Anthropic API credentials — set ANTHROPIC_API_KEY in the server's environment and restart it.");
+      }
+      if (useFallback && err.status === 400 && /fallback/i.test(err.message)) {
+        useFallback = false;
+        continue;
       }
       throw err;
     }
@@ -360,6 +435,7 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
       contextBlocks,
       tools: posting.tools,
       model: resumeSkill.model,
+      debugLabel: `job ${job.id} resume`,
       instruction: `${resumeSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}`
     });
     const resumeDocx = await buildDocx(source.buffer, resumeXml);
@@ -370,6 +446,7 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
       contextBlocks,
       tools: posting.tools,
       model: coverSkill.model,
+      debugLabel: `job ${job.id} cover letter`,
       instruction: `${coverSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
     });
     documents = [
