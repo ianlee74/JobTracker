@@ -48,9 +48,10 @@ function getClient() {
   return client;
 }
 
-// The instruction body of skills/<name>/SKILL.md (frontmatter stripped).
-// The skills define how each document is written, so they are user-editable
-// without touching code.
+// The instructions of skills/<name>/SKILL.md (the body, frontmatter stripped)
+// plus the optional `model:` from its frontmatter, which overrides the default
+// model for that document type. The skills define how each document is
+// written, so they are user-editable without touching code.
 async function loadSkill(name) {
   const file = path.join(SKILLS_DIR, name, 'SKILL.md');
   let raw;
@@ -59,7 +60,11 @@ async function loadSkill(name) {
   } catch {
     throw new Error(`Missing skill file: ${file}`);
   }
-  return raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+  const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  return {
+    instructions: (frontmatter ? raw.slice(frontmatter[0].length) : raw).trim(),
+    model: frontmatter?.[1].match(/^model:[ \t]*['"]?([\w.-]+)/m)?.[1]
+  };
 }
 
 // A content block for a local file: PDFs as document blocks, text formats as
@@ -230,13 +235,13 @@ async function buildDocx(originalBuffer, documentXml) {
 
 // One Messages API call; returns the document text. Streams to avoid HTTP
 // timeouts on long generations, and continues through pause_turn (web_fetch).
-async function generateDocument({ contextBlocks, tools, instruction, system = SYSTEM_PROMPT }) {
+async function generateDocument({ contextBlocks, tools, instruction, model = MODEL, system = SYSTEM_PROMPT }) {
   const messages = [{ role: 'user', content: [...contextBlocks, { type: 'text', text: instruction }] }];
   for (let attempt = 0; attempt < 5; attempt++) {
     let response;
     try {
       response = await getClient().beta.messages.stream({
-        model: MODEL,
+        model,
         max_tokens: 64000,
         betas: ['server-side-fallback-2026-06-01'],
         fallbacks: [{ model: 'claude-opus-4-8' }],
@@ -354,7 +359,8 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
     const resumeXml = await generateDocxXml({
       contextBlocks,
       tools: posting.tools,
-      instruction: `${resumeSkill}\n\n${DOCX_OUTPUT_INSTRUCTION}`
+      model: resumeSkill.model,
+      instruction: `${resumeSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}`
     });
     const resumeDocx = await buildDocx(source.buffer, resumeXml);
     // The cover-letter call gets the tailored resume as plain text — enough
@@ -363,7 +369,8 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
     const coverXml = await generateDocxXml({
       contextBlocks,
       tools: posting.tools,
-      instruction: `${coverSkill}\n\n${DOCX_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
+      model: coverSkill.model,
+      instruction: `${coverSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
     });
     documents = [
       await saveDocument(person, job, 'resume', 'resume.docx', resumeDocx),
@@ -373,12 +380,14 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
     const resumeText = await generateDocument({
       contextBlocks,
       tools: posting.tools,
-      instruction: `${resumeSkill}\n\n${MD_OUTPUT_INSTRUCTION}`
+      model: resumeSkill.model,
+      instruction: `${resumeSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}`
     });
     const coverText = await generateDocument({
       contextBlocks,
       tools: posting.tools,
-      instruction: `${coverSkill}\n\n${MD_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
+      model: coverSkill.model,
+      instruction: `${coverSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
     });
     documents = [
       await saveDocument(person, job, 'resume', 'resume.md', resumeText),

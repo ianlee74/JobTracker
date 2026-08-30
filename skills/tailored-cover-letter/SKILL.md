@@ -1,6 +1,7 @@
 ---
 name: tailored-cover-letter
 description: Write a cover letter tailored to one specific job posting, grounded in the candidate's standard resume. Used by JobTracker's document generator; edit this file to change how cover letters are written.
+model: claude-sonnet-5
 ---
 
 # Tailored Cover Letter

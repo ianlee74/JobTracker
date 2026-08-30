@@ -40,7 +40,7 @@ flowchart TB
         SNAP["standard-resume-&lt;person&gt;.*"]
     end
 
-    API_EXT["Anthropic API<br/>(claude-opus-5)"]
+    API_EXT["Anthropic API<br/>(claude-opus-5 by default)"]
     SKILLS["skills/*/SKILL.md"]
 
     UI --> CADDY --> API
@@ -239,7 +239,7 @@ sequenceDiagram
     participant C as Caller (UI button / MCP tool)
     participant G as generate.js
     participant DB as db.js
-    participant A as Anthropic API (claude-opus-5)
+    participant A as Anthropic API (claude-opus-5 by default)
     participant FS as documents dir
 
     C->>G: generateJobDocuments(job)
@@ -263,7 +263,7 @@ The rationale behind the main pieces:
 
 - **The `.docx` template trick.** Rather than generating a document from scratch (generic-looking) or using a templating library (rigid), the model is given the resume's own `word/document.xml` as both content source and formatting reference, and asked to write a replacement `document.xml` reusing the original's style references, numbering ids, and section properties. The output is zipped back into a **copy of the original file**, so every style, font, header, and relationship the XML references still resolves. Generated documents are visually indistinguishable from the user's own resume ([generate.js](server/generate.js)).
 - **Validation gate with one retry.** Word refuses malformed XML outright, so `docXmlProblem` checks well-formedness with `fast-xml-parser` before packaging; a failure feeds the parser error back to the model for one retry. This converts the most likely failure mode from "user opens a broken file" into "generation takes one extra call."
-- **Skills as editable Markdown.** The writing instructions live in [skills/tailored-resume/SKILL.md](skills/tailored-resume/SKILL.md) and [skills/tailored-cover-letter/SKILL.md](skills/tailored-cover-letter/SKILL.md), loaded at generation time with frontmatter stripped. The user can change *how documents are written* without touching code — the same philosophy as Claude's own skill system.
+- **Skills as editable Markdown.** The writing instructions live in [skills/tailored-resume/SKILL.md](skills/tailored-resume/SKILL.md) and [skills/tailored-cover-letter/SKILL.md](skills/tailored-cover-letter/SKILL.md), loaded at generation time. The user can change *how documents are written* without touching code — the same philosophy as Claude's own skill system. An optional `model:` key in a skill's frontmatter overrides the default model (`claude-opus-5`) for that document type.
 - **Anti-fabrication and prompt-injection defenses in the system prompt.** The standard resume is declared the single source of truth (never invent employers, dates, metrics), and the job posting is explicitly framed as *data, not instructions* — a real concern, since postings are arbitrary web content fed into the prompt.
 - **Prompt caching and call ordering.** The resume block and job-context block carry `cache_control` breakpoints; the instruction comes last. So the second call (cover letter) reuses the cached prefix of the first, and batch runs reuse the resume block across jobs. The cover-letter call receives the just-written resume as **plain text** rather than XML — enough for consistency at a fraction of the tokens.
 - **Streaming + `pause_turn` loop.** Responses stream to avoid HTTP timeouts on multi-minute generations, and the loop continues through `pause_turn` stop reasons (which web_fetch produces). A server-side fallback to `claude-opus-4-8` covers model unavailability.
