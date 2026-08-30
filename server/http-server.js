@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
-import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
+import { generateJobDocuments, saveUploadedDocument, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { handleRespond } from './respond.js';
 import { handleAuth, requestUser, authEnabled, checkMcpToken, mcpTokenConfigured } from './auth.js';
@@ -400,6 +400,9 @@ async function handleApi(req, res, url, user) {
     const encoded = encodeURIComponent(name).replace(/['()*!]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
+      // The URL stays the same when a document is regenerated or replaced by
+      // an upload, so it must never be served from the browser cache.
+      'Cache-Control': 'no-store',
       // inline: Markdown displays in the browser; .docx downloads either way,
       // and the filename here makes that download friendly too.
       'Content-Disposition': `${url.searchParams.get('download') ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encoded}`
@@ -521,6 +524,32 @@ async function handleApi(req, res, url, user) {
       return json(res, 200, await generateJobDocuments({ id }, { skipExisting: Boolean(body.skip_existing) }));
     } catch (err) {
       return json(res, err.message === 'Job not found' ? 404 : 500, { error: err.message });
+    }
+  }
+
+  // Upload a hand-customized resume or cover letter for one job (raw body,
+  // filename in ?name=), replacing the generated document of that kind.
+  if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 4 && parts[3] === 'document') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
+    const job = getJob({ id });
+    // 404 (not 403) so other people's job ids aren't confirmed to exist.
+    if (!job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'Job not found' });
+    const kind = url.searchParams.get('kind');
+    if (kind !== 'resume' && kind !== 'cover_letter') {
+      return json(res, 400, { error: 'kind must be "resume" or "cover_letter"' });
+    }
+    let body;
+    try {
+      body = await readRawBody(req, 50 * 1024 * 1024);
+    } catch (err) {
+      return json(res, 413, { error: err.message });
+    }
+    if (!body.length) return json(res, 400, { error: 'The uploaded file is empty' });
+    try {
+      return json(res, 200, await saveUploadedDocument(job, kind, path.basename(url.searchParams.get('name') || ''), body));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
     }
   }
 

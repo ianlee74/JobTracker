@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { XMLValidator } from 'fast-xml-parser';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { getJob, listJobs, getCompany, getPerson, getJobDocument, upsertJobDocument, DB_PATH } from './db.js';
@@ -272,13 +272,40 @@ function clean(s) {
   return s.replace(/[<>:"\/\\|?*\u0000-\u001f]/g, '_').replace(/[.\s]+$/, '').trim().slice(0, 60);
 }
 
-async function saveDocument(person, job, kind, fileName, text) {
+async function saveDocument(person, job, kind, fileName, content) {
   const base = documentsDir(person);
   const folder = `${job.id} - ${clean(job.company)} - ${clean(job.title)}`;
   await mkdir(path.join(base, folder), { recursive: true });
-  await writeFile(path.join(base, folder, fileName), text, 'utf8');
+  await writeFile(path.join(base, folder, fileName), content, 'utf8');
   // Relative paths are stored with forward slashes so the DB stays portable.
   return upsertJobDocument(job.id, kind, `${folder}/${fileName}`);
+}
+
+// Formats accepted for a manually customized document — the same set
+// /api/document can serve with a real content type.
+const UPLOAD_EXTS = new Set(['.docx', '.pdf', '.md', '.txt', '.html']);
+
+// Stores a hand-edited resume or cover letter uploaded through the UI in the
+// job's documents folder, replacing the generated file for that kind (it
+// becomes what /api/document serves; a later ✨ regeneration overwrites it).
+export async function saveUploadedDocument(job, kind, originalName, buffer) {
+  const person = getPerson(job.person_id);
+  if (!person) throw new Error(`Job ${job.id} belongs to an unknown person (id ${job.person_id})`);
+  const ext = path.extname(originalName).toLowerCase();
+  if (!UPLOAD_EXTS.has(ext)) {
+    throw new Error(`Unsupported file type "${ext || originalName}" — upload a .docx, .pdf, .md, .txt, or .html file`);
+  }
+  const previous = getJobDocument(job.id, kind);
+  const fileName = `${kind === 'cover_letter' ? 'cover-letter' : 'resume'}${ext}`;
+  const doc = await saveDocument(person, job, kind, fileName, buffer);
+  // A format switch (.docx -> .pdf) or a renamed job leaves the old file at a
+  // different path — tidy it (only ever inside the documents tree).
+  if (previous && previous.path !== doc.path) {
+    const base = path.resolve(documentsDir(person));
+    const old = path.resolve(base, previous.path);
+    if (old.startsWith(base + path.sep)) await rm(old, { force: true });
+  }
+  return doc;
 }
 
 // Generate the tailored resume and cover letter for one job, using the owning
