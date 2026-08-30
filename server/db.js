@@ -230,6 +230,37 @@ db.exec(`
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_feedback_token ON jobs(feedback_token) WHERE feedback_token != ''");
 }
 
+// Migration: the candidate's own note on a job. The original `note` column is
+// the admin's note; `user_note` belongs to the signed-in user tracking the job.
+{
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!cols.includes('user_note')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN user_note TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+// Migration: web accounts and their sessions. A user signs in with Google;
+// the email is the identity. role is 'admin' or 'user'; person_id links a
+// 'user' account to the person whose jobs they see.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    name TEXT NOT NULL DEFAULT '',
+    picture TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'user',
+    person_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_login_at TEXT NOT NULL DEFAULT ''
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    expires_at TEXT NOT NULL
+  );
+`);
+
 // Seed the first person, inheriting the legacy global settings (settings-table
 // rows from single-person databases; empty on a fresh database).
 if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
@@ -372,9 +403,9 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
   if (level) { where.push('level = ?'); params.push(level); }
   if (since) { where.push('date_found >= ?'); params.push(since); }
   if (q) {
-    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ?)');
+    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ?)');
     const like = `%${q}%`;
-    params.push(like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like);
   }
   // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
   // so callers know what exists without a second query. person_name saves a
@@ -470,7 +501,10 @@ export function addJobs(jobs, defaultPersonId) {
   return results;
 }
 
-const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'level', 'rejection_reason'];
+const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason'];
+
+// The subset of job fields a non-admin user may change on their own jobs.
+export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'user_note'];
 
 export function updateJob({ id, url, personId }, fields) {
   const job = getJob({ id, url, personId });
@@ -555,6 +589,93 @@ export function upsertCompany(name, fields) {
     db.prepare(sql).run(...values, new Date().toISOString(), name);
   }
   return getCompany(name);
+}
+
+// ---- Users & sessions (web authentication) ----
+
+export const ROLES = ['admin', 'user'];
+
+export function listUsers() {
+  return db.prepare(`
+    SELECT users.*, (SELECT name FROM people WHERE people.id = users.person_id) AS person_name
+    FROM users ORDER BY email COLLATE NOCASE
+  `).all();
+}
+
+export function getUser(id) {
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(id) ?? null;
+}
+
+export function getUserByEmail(email) {
+  return db.prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE').get(String(email ?? '').trim()) ?? null;
+}
+
+export function addUser({ email, role = 'user', person_id = null, name = '' }) {
+  email = String(email ?? '').trim();
+  if (!email.includes('@')) throw new Error('A valid email address is required');
+  if (!ROLES.includes(role)) throw new Error(`Invalid role "${role}". Valid roles: ${ROLES.join(', ')}`);
+  if (getUserByEmail(email)) throw new Error(`A user with email "${email}" already exists`);
+  if (person_id != null && !getPerson(person_id)) throw new Error(`Unknown person id "${person_id}"`);
+  const info = db.prepare('INSERT INTO users (email, role, person_id, name) VALUES (?, ?, ?, ?)')
+    .run(email, role, person_id, String(name ?? ''));
+  return getUser(info.lastInsertRowid);
+}
+
+export function updateUser(id, fields) {
+  const user = getUser(id);
+  if (!user) return null;
+  if (fields.role !== undefined && !ROLES.includes(fields.role)) {
+    throw new Error(`Invalid role "${fields.role}". Valid roles: ${ROLES.join(', ')}`);
+  }
+  if (fields.person_id !== undefined && fields.person_id != null && !getPerson(fields.person_id)) {
+    throw new Error(`Unknown person id "${fields.person_id}"`);
+  }
+  const allowed = ['role', 'person_id', 'name', 'picture', 'last_login_at'];
+  const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+  if (!updates.length) return user;
+  const sql = `UPDATE users SET ${updates.map(([k]) => `${k} = ?`).join(', ')} WHERE id = ?`;
+  db.prepare(sql).run(...updates.map(([, v]) => v), id);
+  return getUser(id);
+}
+
+export function deleteUser(id) {
+  const user = getUser(id);
+  if (!user) return false;
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  return true;
+}
+
+const SESSION_DAYS = 30;
+
+export function createSession(userId) {
+  const token = randomBytes(32).toString('base64url');
+  const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, expires);
+  // Opportunistic cleanup so the table can't grow without bound.
+  db.prepare("DELETE FROM sessions WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now')").run();
+  return { token, expires_at: expires, max_age: SESSION_DAYS * 24 * 60 * 60 };
+}
+
+// The signed-in user for a session token, or null when the token is unknown
+// or expired.
+export function getSessionUser(token) {
+  if (!token) return null;
+  const row = db.prepare(`
+    SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id
+    WHERE sessions.token = ? AND sessions.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  `).get(String(token));
+  return row ?? null;
+}
+
+export function deleteSession(token) {
+  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(String(token));
+}
+
+// Whether this person tracks a job with this exact posting URL — used to
+// authorize non-admin access to /api/local-file.
+export function personTracksUrl(url, personId) {
+  return Boolean(db.prepare('SELECT 1 FROM jobs WHERE url = ? AND person_id = ? LIMIT 1').get(url, personId));
 }
 
 export function getStats({ personId } = {}) {

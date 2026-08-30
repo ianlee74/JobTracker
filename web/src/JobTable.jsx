@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, jobHref } from './constants.js';
 import { documentUrl } from './api.js';
 
-function NoteInput({ job, onUpdate }) {
-  const [value, setValue] = useState(job.note || '');
+// Autosaving textarea bound to one of a job's note fields: `note` (the
+// admin's) or `user_note` (the candidate's own).
+function NoteInput({ job, field = 'note', placeholder = 'Add a note...', onUpdate }) {
+  const [value, setValue] = useState(job[field] || '');
   const timer = useRef(null);
   const latest = useRef(value);
   const box = useRef(null);
@@ -12,14 +14,14 @@ function NoteInput({ job, onUpdate }) {
   // user is typing here, so in-flight keystrokes aren't clobbered.
   useEffect(() => {
     if (document.activeElement !== box.current) {
-      setValue(job.note || '');
-      latest.current = job.note || '';
+      setValue(job[field] || '');
+      latest.current = job[field] || '';
     }
-  }, [job.id, job.note]);
+  }, [job.id, job[field]]);
 
   const save = (text) => {
-    if (text === job.note) return;
-    onUpdate(job.id, { note: text });
+    if (text === job[field]) return;
+    onUpdate(job.id, { [field]: text });
   };
 
   const handleChange = (e) => {
@@ -41,12 +43,19 @@ function NoteInput({ job, onUpdate }) {
     <textarea
       ref={box}
       className="note-input"
-      placeholder="Add a note..."
+      placeholder={placeholder}
       value={value}
       onChange={handleChange}
       onBlur={handleBlur}
     />
   );
+}
+
+// The other party's note, shown but not editable (empty renders a dash).
+function ReadOnlyNote({ text }) {
+  return text
+    ? <div className="note-readonly">{text}</div>
+    : <div className="note-readonly note-empty">—</div>;
 }
 
 // Reason for "Not Moving Forward". Custom text is stored directly in
@@ -143,7 +152,7 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
@@ -166,16 +175,18 @@ function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenera
       </td>
       <td>{job.category}</td>
       <td>
-        <select
-          className="level-select"
-          value={job.level || ''}
-          onChange={e => onUpdate(job.id, { level: e.target.value })}
-          title="Seniority level (auto-classified from the title; change if wrong)"
-        >
-          {job.level && !LEVELS.includes(job.level) && <option value={job.level}>{job.level}</option>}
-          {!job.level && <option value="">—</option>}
-          {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
-        </select>
+        {isAdmin ? (
+          <select
+            className="level-select"
+            value={job.level || ''}
+            onChange={e => onUpdate(job.id, { level: e.target.value })}
+            title="Seniority level (auto-classified from the title; change if wrong)"
+          >
+            {job.level && !LEVELS.includes(job.level) && <option value={job.level}>{job.level}</option>}
+            {!job.level && <option value="">—</option>}
+            {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+        ) : (job.level || '—')}
       </td>
       <td>
         <span title={salaryRange && job.salary && job.salary !== salaryRange ? `As listed: ${job.salary}` : undefined}>
@@ -194,7 +205,16 @@ function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenera
         </select>
         {job.status === 'Not Moving Forward' && <RejectionReason job={job} onUpdate={onUpdate} />}
       </td>
-      {!wide && <td><NoteInput job={job} onUpdate={onUpdate} /></td>}
+      {!wide && (
+        <td>
+          <NoteInput
+            job={job}
+            field={isAdmin ? 'note' : 'user_note'}
+            placeholder={isAdmin ? 'Add a note...' : 'Add your note...'}
+            onUpdate={onUpdate}
+          />
+        </td>
+      )}
       <td className="cell-actions" rowSpan={span}>
         <button
           className={`edit-btn gen-btn ${generating ? 'busy' : ''}`}
@@ -206,22 +226,26 @@ function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenera
         >
           {generating ? '⏳' : '✨'}
         </button>
-        <button
-          className="edit-btn"
-          title="Edit this job"
-          onClick={() => onEdit(job)}
-        >
-          ✎
-        </button>
-        <button
-          className="delete-btn"
-          title="Delete this job"
-          onClick={() => {
-            if (window.confirm(`Delete "${job.title}" at ${job.company}?`)) onDelete(job.id);
-          }}
-        >
-          ✕
-        </button>
+        {isAdmin && (
+          <button
+            className="edit-btn"
+            title="Edit this job"
+            onClick={() => onEdit(job)}
+          >
+            ✎
+          </button>
+        )}
+        {isAdmin && (
+          <button
+            className="delete-btn"
+            title="Delete this job"
+            onClick={() => {
+              if (window.confirm(`Delete "${job.title}" at ${job.company}?`)) onDelete(job.id);
+            }}
+          >
+            ✕
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -233,8 +257,20 @@ function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenera
       {mainRow}
       <tr className="note-row">
         <td colSpan={5}>
-          <div className="note-label">Notes</div>
-          <NoteInput job={job} onUpdate={onUpdate} />
+          <div className="note-pair">
+            <div className="note-block">
+              <div className="note-label">{isAdmin ? 'Notes' : 'Admin notes'}</div>
+              {isAdmin
+                ? <NoteInput job={job} field="note" onUpdate={onUpdate} />
+                : <ReadOnlyNote text={job.note} />}
+            </div>
+            <div className="note-block">
+              <div className="note-label">{isAdmin ? 'Candidate notes' : 'My notes'}</div>
+              {isAdmin
+                ? <ReadOnlyNote text={job.user_note} />
+                : <NoteInput job={job} field="user_note" placeholder="Add your note..." onUpdate={onUpdate} />}
+            </div>
+          </div>
         </td>
       </tr>
     </React.Fragment>
@@ -251,7 +287,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -278,6 +314,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdi
               key={job.id}
               job={job}
               wide={wide}
+              isAdmin={isAdmin}
               onUpdate={onUpdate}
               onDelete={onDelete}
               onEdit={onEdit}

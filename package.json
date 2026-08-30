@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "mcp": "node server/mcp-server.js",
+    "test": "node scripts/test-auth.mjs",
     "import": "node scripts/import-html.mjs"
   },
   "dependencies": {

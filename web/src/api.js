@@ -4,11 +4,28 @@ async function request(url, options = {}) {
     ...options
   });
   if (!res.ok) {
+    // Session gone (expired or signed out elsewhere) — let AuthGate flip the
+    // app back to the sign-in screen.
+    if (res.status === 401) window.dispatchEvent(new Event('jobtracker:unauthorized'));
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed (${res.status})`);
   }
   return res.json();
 }
+
+// ---- Authentication & user management ----
+export const fetchAuthConfig = () => request('/api/auth/config');
+export const fetchMe = () => request('/api/me');
+export const googleSignIn = (credential) =>
+  request('/api/auth/google', { method: 'POST', body: JSON.stringify({ credential }) });
+export const signOut = () => request('/api/auth/logout', { method: 'POST' });
+export const fetchUsers = () => request('/api/users');
+export const addUser = (fields) =>
+  request('/api/users', { method: 'POST', body: JSON.stringify(fields) });
+export const updateUser = (id, fields) =>
+  request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
+export const deleteUser = (id) =>
+  request(`/api/users/${id}`, { method: 'DELETE' });
 
 export const fetchJobs = (personId) =>
   request('/api/jobs' + (personId ? `?person=${personId}` : ''));

@@ -4,10 +4,13 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, STATUSES, LEVELS, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { handleRespond } from './respond.js';
+import { handleAuth, requestUser, authEnabled, checkMcpToken, mcpTokenConfigured } from './auth.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpServer } from './mcp-tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', 'dist');
@@ -123,13 +126,45 @@ function readBody(req) {
   });
 }
 
-async function handleApi(req, res, url) {
+function forbidden(res, msg = 'Not allowed for your role') {
+  return json(res, 403, { error: msg });
+}
+
+// Remote MCP endpoint (/mcp): the same tools as the stdio server, over the
+// Streamable HTTP transport, guarded by an admin bearer token. Stateless —
+// each request gets a fresh server + transport, so no session bookkeeping.
+async function handleMcp(req, res) {
+  if (!mcpTokenConfigured()) {
+    return json(res, 503, { error: 'Remote MCP is disabled — set JOBTRACKER_MCP_TOKEN on the server to enable it' });
+  }
+  if (!checkMcpToken(req)) {
+    res.setHeader('WWW-Authenticate', 'Bearer');
+    return json(res, 401, { error: 'Missing or invalid MCP bearer token' });
+  }
+  if (req.method !== 'POST') {
+    return json(res, 405, { error: 'Method not allowed — this MCP endpoint is stateless and accepts POST only' });
+  }
+  const server = createMcpServer();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on('close', () => { transport.close(); server.close(); });
+  await server.connect(transport);
+  await transport.handleRequest(req, res, await readBody(req));
+}
+
+async function handleApi(req, res, url, user) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
+  const isAdmin = user.role === 'admin';
+  // A user account that isn't linked to a person yet has nothing to look at
+  // or change; fail every call with the reason instead of empty results.
+  if (!isAdmin && user.person_id == null) {
+    return forbidden(res, 'Your account is not linked to a person yet — ask the administrator to link it.');
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/jobs') {
     const p = url.searchParams;
     return json(res, 200, listJobs({
-      personId: p.get('person') ? Number(p.get('person')) : undefined,
+      // Non-admins only ever see their own person's jobs, whatever they ask for.
+      personId: isAdmin ? (p.get('person') ? Number(p.get('person')) : undefined) : user.person_id,
       status: p.get('status') || undefined,
       company: p.get('company') || undefined,
       level: p.get('level') || undefined,
@@ -142,6 +177,7 @@ async function handleApi(req, res, url) {
   // Stores a file dragged onto the UI (raw body, filename in the query) and
   // returns the stored copy's file:// URL.
   if (req.method === 'POST' && url.pathname === '/api/upload-posting') {
+    if (!isAdmin) return forbidden(res);
     const rawName = url.searchParams.get('name') || 'posting';
     const name = path.basename(rawName).replace(/[<>:"\/\\|?*\u0000-\u001f]/g, '_') || 'posting';
     let body;
@@ -164,6 +200,7 @@ async function handleApi(req, res, url) {
 
   // Directory listing for the in-app file picker.
   if (req.method === 'GET' && url.pathname === '/api/browse') {
+    if (!isAdmin) return forbidden(res);
     const dir = path.resolve(url.searchParams.get('dir') || os.homedir());
     let dirents;
     try {
@@ -188,8 +225,10 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/local-file') {
     const fileUrl = url.searchParams.get('url') || '';
     if (!fileUrl.startsWith('file:')) return json(res, 400, { error: 'Expected a file:// URL' });
-    // Only serve files that are actually some tracked job's posting URL.
-    if (!isUrlTracked(fileUrl)) return json(res, 404, { error: 'No tracked job has this file URL' });
+    // Only serve files that are actually some tracked job's posting URL —
+    // and for non-admins, one of *their own* jobs' URLs.
+    const tracked = isAdmin ? isUrlTracked(fileUrl) : personTracksUrl(fileUrl, user.person_id);
+    if (!tracked) return json(res, 404, { error: 'No tracked job has this file URL' });
     let filePath;
     try { filePath = fileURLToPath(fileUrl); }
     catch { return json(res, 400, { error: 'Invalid file URL' }); }
@@ -209,8 +248,13 @@ async function handleApi(req, res, url) {
   // People: the candidates whose jobs are tracked. Each carries their own
   // document-generation settings (resume_path, documents_dir).
   if (url.pathname === '/api/people') {
-    if (req.method === 'GET') return json(res, 200, listPeople());
+    // A non-admin sees only the person their account is linked to.
+    if (req.method === 'GET') {
+      const people = listPeople();
+      return json(res, 200, isAdmin ? people : people.filter(p => p.id === user.person_id));
+    }
     if (req.method === 'POST') {
+      if (!isAdmin) return forbidden(res);
       const body = await readBody(req);
       try {
         return json(res, 201, addPerson(body.name));
@@ -221,6 +265,7 @@ async function handleApi(req, res, url) {
   }
 
   if (parts[0] === 'api' && parts[1] === 'people' && parts.length === 3) {
+    if (!isAdmin) return forbidden(res);
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid person id' });
     if (req.method === 'GET') {
@@ -253,6 +298,10 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET') return json(res, 200, getCompany(name));
     if (req.method === 'PATCH') {
       const body = await readBody(req);
+      // Users may only flag/unflag favorites; everything else is admin's.
+      if (!isAdmin && Object.keys(body).some(k => k !== 'favorite')) {
+        return forbidden(res, 'Your role can only change the favorite flag on a company');
+      }
       try {
         return json(res, 200, upsertCompany(name, body));
       } catch (err) {
@@ -266,6 +315,7 @@ async function handleApi(req, res, url) {
   // (ANTHROPIC_API_KEY or an `ant auth login` profile); the response only
   // reports whether one was found.
   if (url.pathname === '/api/settings') {
+    if (!isAdmin) return forbidden(res);
     let person;
     try {
       person = personFromQuery(url);
@@ -290,6 +340,7 @@ async function handleApi(req, res, url) {
   // the resume is first chosen/dropped and on every re-sync from the original
   // file it holds a browser file handle to — that keeps the snapshot current.
   if (req.method === 'POST' && url.pathname === '/api/settings/resume-file') {
+    if (!isAdmin) return forbidden(res);
     let person;
     try {
       person = personFromQuery(url);
@@ -328,6 +379,8 @@ async function handleApi(req, res, url) {
     const doc = Number.isInteger(jobId) ? getJobDocument(jobId, kind) : null;
     if (!doc) return json(res, 404, { error: 'No such document' });
     const job = getJob({ id: jobId });
+    // 404 (not 403) so another person's document ids aren't confirmed to exist.
+    if (!isAdmin && job.person_id !== user.person_id) return json(res, 404, { error: 'No such document' });
     const base = documentsDir(getPerson(job.person_id));
     const filePath = path.resolve(base, doc.path);
     if (!filePath.startsWith(path.resolve(base))) return json(res, 403, { error: 'Forbidden' });
@@ -358,6 +411,7 @@ async function handleApi(req, res, url) {
   // saved email), subject, and HTML/plain-text bodies with per-job feedback
   // links. Composing only — sending is up to the caller.
   if (req.method === 'POST' && url.pathname === '/api/interested-email') {
+    if (!isAdmin) return forbidden(res);
     let person;
     try {
       person = personFromQuery(url);
@@ -375,6 +429,7 @@ async function handleApi(req, res, url) {
   // Human-friendly preview of that email: the rendered message plus a toolbar
   // to copy it (rich text for pasting into a compose window, or raw HTML).
   if (req.method === 'GET' && url.pathname === '/api/interested-email/preview') {
+    if (!isAdmin) return forbidden(res);
     let email;
     try {
       email = composeInterestedEmail({ personId: personFromQuery(url).id });
@@ -428,7 +483,8 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/stats') {
     const p = url.searchParams.get('person');
-    return json(res, 200, { ...getStats({ personId: p ? Number(p) : undefined }), statuses: STATUSES, levels: LEVELS });
+    const personId = isAdmin ? (p ? Number(p) : undefined) : user.person_id;
+    return json(res, 200, { ...getStats({ personId }), statuses: STATUSES, levels: LEVELS });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/jobs') {
@@ -438,6 +494,8 @@ async function handleApi(req, res, url) {
       if (!job.title || !job.company || !job.url) {
         return json(res, 400, { error: 'Each job requires title, company, and url' });
       }
+      // Users can only add jobs to their own list.
+      if (!isAdmin) job.person_id = user.person_id;
     }
     // Jobs without their own person_id go to ?person=<id> (or the only person).
     try {
@@ -454,6 +512,10 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 4 && parts[3] === 'generate') {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
+    if (!isAdmin) {
+      const job = getJob({ id });
+      if (!job || job.person_id !== user.person_id) return json(res, 404, { error: 'Job not found' });
+    }
     const body = await readBody(req);
     try {
       return json(res, 200, await generateJobDocuments({ id }, { skipExisting: Boolean(body.skip_existing) }));
@@ -465,6 +527,12 @@ async function handleApi(req, res, url) {
   if (parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 3) {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
+    // Non-admins can only see or touch their own jobs; 404 (not 403) so other
+    // people's job ids aren't confirmed to exist.
+    if (!isAdmin) {
+      const job = getJob({ id });
+      if (!job || job.person_id !== user.person_id) return json(res, 404, { error: 'Not found' });
+    }
 
     if (req.method === 'GET') {
       const job = getJob({ id });
@@ -472,6 +540,12 @@ async function handleApi(req, res, url) {
     }
     if (req.method === 'PATCH') {
       const body = await readBody(req);
+      if (!isAdmin) {
+        const blocked = Object.keys(body).filter(k => !USER_EDITABLE_JOB_FIELDS.includes(k));
+        if (blocked.length) {
+          return forbidden(res, `Your role can only change: ${USER_EDITABLE_JOB_FIELDS.join(', ')}`);
+        }
+      }
       try {
         const job = updateJob({ id }, body);
         return job ? json(res, 200, job) : json(res, 404, { error: 'Not found' });
@@ -480,7 +554,51 @@ async function handleApi(req, res, url) {
       }
     }
     if (req.method === 'DELETE') {
+      if (!isAdmin) return forbidden(res);
       return deleteJob({ id }) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Not found' });
+    }
+  }
+
+  // User management (invitations, roles, person links) — admin only.
+  if (url.pathname === '/api/users') {
+    if (!isAdmin) return forbidden(res);
+    if (req.method === 'GET') return json(res, 200, listUsers());
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 201, addUser(body));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+  }
+
+  if (parts[0] === 'api' && parts[1] === 'users' && parts.length === 3) {
+    if (!isAdmin) return forbidden(res);
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid user id' });
+    // Admins can't demote or delete their own signed-in account — prevents
+    // locking every admin out of the deployment.
+    const self = authEnabled() && id === user.id;
+    if (req.method === 'PATCH') {
+      const body = await readBody(req);
+      if (self && body.role !== undefined && body.role !== 'admin') {
+        return json(res, 400, { error: 'You cannot remove your own admin role' });
+      }
+      try {
+        const updated = updateUser(id, body);
+        return updated ? json(res, 200, updated) : json(res, 404, { error: 'Not found' });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (req.method === 'DELETE') {
+      if (self) return json(res, 400, { error: 'You cannot delete your own account' });
+      return deleteUser(id) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Not found' });
+    }
+    if (req.method === 'GET') {
+      const found = getUser(id);
+      return found ? json(res, 200, found) : json(res, 404, { error: 'Not found' });
     }
   }
 
@@ -510,8 +628,20 @@ async function serveStatic(res, pathname) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
-    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    // Order matters: /mcp has its own bearer-token auth; /api/auth/* and
+    // /respond/* work without a session (sign-in itself, and the tokenized
+    // candidate-feedback links); every other /api route needs a signed-in
+    // user. Static files stay public — the SPA shell *is* the sign-in page.
+    if (url.pathname === '/mcp') return await handleMcp(req, res);
+    if (url.pathname.startsWith('/api/auth/') || url.pathname === '/api/me') {
+      return await handleAuth(req, res, url, { json, readBody });
+    }
     if (await handleRespond(req, res, url)) return;
+    if (url.pathname.startsWith('/api/')) {
+      const user = requestUser(req);
+      if (!user) return json(res, 401, { error: 'Sign in required' });
+      return await handleApi(req, res, url, user);
+    }
     return await serveStatic(res, url.pathname);
   } catch (err) {
     return json(res, 500, { error: err.message });

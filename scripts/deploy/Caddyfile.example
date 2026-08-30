@@ -1,0 +1,23 @@
+# Caddy reverse proxy for JobTracker.
+# Copy to C:\caddy\Caddyfile and replace the hostname with yours.
+# Caddy obtains and renews the Let's Encrypt certificate automatically,
+# as long as ports 80 and 443 are forwarded to this machine.
+
+jobs.example.com {
+	# The Node app listens on localhost only; Caddy is the sole public listener.
+	# Document generation can hold a request open for minutes, hence the long
+	# response timeout.
+	reverse_proxy 127.0.0.1:7080 {
+		transport http {
+			response_header_timeout 10m
+		}
+	}
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

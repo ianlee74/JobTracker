@@ -1,0 +1,39 @@
+# Deploys to the home server via its self-hosted runner.
+#
+# Security model (public repo + self-hosted runner):
+#   1. The runner's pre-job hook (scripts/runner/pre-job-hook.ps1, installed
+#      at C:\actions-runner\pre-job-hook.ps1 on the server) rejects any job
+#      that is not a push/workflow_dispatch on refs/heads/main of this repo
+#      by an allowed actor — before a single workflow step runs.
+#   2. Repo settings: Actions -> "Require approval for all outside
+#      collaborators", plus branch protection on main.
+#   3. The runner service runs as a dedicated low-privilege account.
+# See docs/deployment.md.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, windows, jobtracker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build UI
+        run: npm run build
+
+      - name: Deploy and restart service
+        run: powershell -ExecutionPolicy Bypass -File scripts/deploy/deploy.ps1
