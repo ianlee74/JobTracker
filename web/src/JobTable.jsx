@@ -51,7 +51,9 @@ function NoteInput({ job, onUpdate }) {
 
 // Reason for "Not Moving Forward". Custom text is stored directly in
 // rejection_reason; the select shows it as "Other" with the text box filled in.
-function RejectionReason({ job, onUpdate }) {
+// onDone fires once a reason is fully chosen (preset picked, or custom text
+// committed) so a filtered view can stop holding the row on screen.
+function RejectionReason({ job, onUpdate, onDone }) {
   const stored = job.rejection_reason || '';
   const isPreset = stored !== 'Other' && REJECTION_REASONS.includes(stored);
   const selectValue = !stored ? '' : isPreset ? stored : 'Other';
@@ -86,7 +88,9 @@ function RejectionReason({ job, onUpdate }) {
         value={selectValue}
         onChange={e => {
           setText('');
-          onUpdate(job.id, { rejection_reason: e.target.value });
+          const value = e.target.value;
+          onUpdate(job.id, { rejection_reason: value });
+          if (value && value !== 'Other') onDone(job.id);
         }}
         title="Why you're not moving forward"
       >
@@ -100,7 +104,11 @@ function RejectionReason({ job, onUpdate }) {
           placeholder="Enter a reason..."
           value={text}
           onChange={handleTextChange}
-          onBlur={() => { clearTimeout(timer.current); saveText(text); }}
+          onBlur={() => {
+            clearTimeout(timer.current);
+            saveText(text);
+            if (text.trim()) onDone(job.id);
+          }}
         />
       )}
     </div>
@@ -143,7 +151,7 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
@@ -192,7 +200,7 @@ function JobRow({ job, wide, onUpdate, onDelete, onEdit, onOpenCompany, onGenera
         >
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        {job.status === 'Not Moving Forward' && <RejectionReason job={job} onUpdate={onUpdate} />}
+        {job.status === 'Not Moving Forward' && <RejectionReason job={job} onUpdate={onUpdate} onDone={onReasonDone} />}
       </td>
       {!wide && <td><NoteInput job={job} onUpdate={onUpdate} /></td>}
       <td className="cell-actions" rowSpan={span}>
@@ -251,7 +259,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -279,6 +287,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onDelete, onEdi
               job={job}
               wide={wide}
               onUpdate={onUpdate}
+              onReasonDone={onReasonDone}
               onDelete={onDelete}
               onEdit={onEdit}
               onOpenCompany={onOpenCompany}

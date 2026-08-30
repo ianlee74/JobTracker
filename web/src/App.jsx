@@ -254,6 +254,10 @@ export default function App() {
   const [editingJob, setEditingJob] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [generatingIds, setGeneratingIds] = useState(new Set()); // jobs with a generation in flight
+  // Jobs just set to "Not Moving Forward" stay visible even when the status
+  // filter would hide them, until a rejection reason has been chosen (and the
+  // custom text entered when "Other" is picked).
+  const [pinnedIds, setPinnedIds] = useState(new Set());
   const [batchProgress, setBatchProgress] = useState(null); // { done, total } while a batch runs
 
   const refresh = useCallback(async () => {
@@ -330,11 +334,25 @@ export default function App() {
     try {
       const updated = await updateJob(id, fields);
       setJobs(prev => prev.map(j => (j.id === id ? updated : j)));
-      setStats(await fetchStats());
+      if (fields.status === 'Not Moving Forward') {
+        setPinnedIds(prev => new Set(prev).add(id));
+      } else if (fields.status) {
+        unpinJob(id);
+      }
+      setStats(await fetchStats(personId));
       flashSaved();
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const unpinJob = (id) => {
+    setPinnedIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   // Save from the edit form; receives only the changed fields (may be none).
@@ -343,7 +361,7 @@ export default function App() {
     if (!Object.keys(fields).length) return;
     const updated = await updateJob(editingJob.id, fields);
     setJobs(prev => prev.map(j => (j.id === editingJob.id ? updated : j)));
-    setStats(await fetchStats());
+    setStats(await fetchStats(personId));
     flashSaved();
   };
 
@@ -351,7 +369,7 @@ export default function App() {
     try {
       await deleteJob(id);
       setJobs(prev => prev.filter(j => j.id !== id));
-      setStats(await fetchStats());
+      setStats(await fetchStats(personId));
       flashSaved();
     } catch (err) {
       setError(err.message);
@@ -479,7 +497,7 @@ export default function App() {
 
     const filtered = jobs.filter(job => {
       if (!showNotInterested && flaggedCompanies.has(job.company)) return false;
-      if (statusFilters.length && !statusFilters.includes(job.status)) return false;
+      if (statusFilters.length && !statusFilters.includes(job.status) && !pinnedIds.has(job.id)) return false;
       if (levelFilter && job.level !== levelFilter) return false;
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
@@ -497,7 +515,7 @@ export default function App() {
       // Stable, sensible tie-break: newest first, then company.
       return result || b.date_found.localeCompare(a.date_found) || a.company.localeCompare(b.company);
     });
-  }, [jobs, statusFilters, levelFilter, textFilter, dateFilter, customDate, sort, showNotInterested, flaggedCompanies, favoriteCompanies]);
+  }, [jobs, statusFilters, levelFilter, textFilter, dateFilter, customDate, sort, showNotInterested, flaggedCompanies, favoriteCompanies, pinnedIds]);
 
   // Tile counts match the jobs that are actually reachable in the list, so
   // they exclude not-interested companies unless those are being shown.
@@ -665,6 +683,7 @@ export default function App() {
         sort={sort}
         onSort={handleSort}
         onUpdate={handleUpdate}
+        onReasonDone={unpinJob}
         onDelete={handleDelete}
         onEdit={setEditingJob}
         onOpenCompany={setActiveCompany}
