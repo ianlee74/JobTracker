@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
 import SettingsDialog from './SettingsDialog.jsx';
+import UsersDialog from './UsersDialog.jsx';
+import { useUser } from './AuthGate.jsx';
 import { syncResumeFromLink } from './resumeLink.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -229,6 +231,8 @@ function AddPersonForm({ onSubmit, onClose }) {
 }
 
 export default function App() {
+  const user = useUser();
+  const isAdmin = user.role === 'admin';
   const [jobs, setJobs] = useState([]);
   const [stats, setStats] = useState(null);
   const [companies, setCompanies] = useState([]);
@@ -253,6 +257,7 @@ export default function App() {
   const [savedFlash, setSavedFlash] = useState(false);
   const [editingJob, setEditingJob] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [usersOpen, setUsersOpen] = useState(false);
   const [generatingIds, setGeneratingIds] = useState(new Set()); // jobs with a generation in flight
   // Jobs just set to "Not Moving Forward" stay visible even when the status
   // filter would hide them, until a rejection reason has been chosen (and the
@@ -502,7 +507,7 @@ export default function App() {
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
-      return [job.title, job.company, job.category, job.fit, job.note, job.salary, job.rejection_reason]
+      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason]
         .some(v => (v || '').toLowerCase().includes(text));
     });
 
@@ -561,7 +566,7 @@ export default function App() {
         </div>
         <div className="header-right">
           <div className={`saved-flash ${savedFlash ? 'visible' : ''}`}>✓ Saved</div>
-          {people.length > 0 && (
+          {isAdmin && people.length > 0 && (
             <select
               className="person-select"
               value={personId ?? ''}
@@ -572,7 +577,7 @@ export default function App() {
               <option value="__add__">＋ Add person…</option>
             </select>
           )}
-          {!activeCompany && (
+          {isAdmin && !activeCompany && (
             <button
               className="clear-btn generate-all-btn"
               onClick={() => window.open(`/api/interested-email/preview?person=${personId}`, '_blank')}
@@ -593,7 +598,25 @@ export default function App() {
             </button>
           )}
           {!activeCompany && <AddJobForm jobs={jobs} onAdd={handleAdd} />}
-          <button className="clear-btn settings-btn" onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
+          {isAdmin && user.auth_enabled && (
+            <button className="clear-btn settings-btn" onClick={() => setUsersOpen(true)} title="Manage users">👥</button>
+          )}
+          {isAdmin && (
+            <button className="clear-btn settings-btn" onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
+          )}
+          {user.auth_enabled && (
+            <div className="user-chip" title={user.email}>
+              {user.picture && <img className="user-pic" src={user.picture} alt="" referrerPolicy="no-referrer" />}
+              <span className="user-name">{user.name || user.email}</span>
+              <button
+                className="clear-btn signout-btn"
+                onClick={async () => { try { await signOut(); } finally { window.location.reload(); } }}
+                title="Sign out"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -608,6 +631,7 @@ export default function App() {
           jobs={jobs.filter(j => j.company === activeCompany)}
           onBack={() => setActiveCompany(null)}
           onSave={(fields) => handleCompanySave(activeCompany, fields)}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -691,7 +715,12 @@ export default function App() {
         generatingIds={generatingIds}
         flaggedCompanies={flaggedCompanies}
         favoriteCompanies={favoriteCompanies}
+        isAdmin={isAdmin}
       />
+      )}
+
+      {usersOpen && (
+        <UsersDialog people={people} onClose={() => setUsersOpen(false)} />
       )}
 
       {settingsOpen && personId != null && (
