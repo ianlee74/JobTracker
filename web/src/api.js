@@ -74,3 +74,11 @@ export const generateDocuments = (id, opts = {}) =>
   request(`/api/jobs/${id}/generate`, { method: 'POST', body: JSON.stringify(opts) });
 export const documentUrl = (id, kind, download) =>
   `/api/document?job=${id}&kind=${kind}${download ? '&download=1' : ''}`;
+// Replaces a job's generated resume or cover letter with a hand-customized
+// file; kind is 'resume' or 'cover_letter'.
+export const uploadJobDocument = (id, kind, file) =>
+  request(`/api/jobs/${id}/document?kind=${kind}&name=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
+  });

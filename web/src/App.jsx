@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, signOut } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
@@ -416,6 +416,18 @@ export default function App() {
     } catch { /* sync is best-effort */ }
   };
 
+  // Replace a job's generated resume/cover letter with a hand-customized file
+  // picked via the ⬆ next to its document link.
+  const handleUploadDocument = async (job, kind, file) => {
+    setError(null);
+    try {
+      await uploadJobDocument(job.id, kind, file);
+      flashSaved();
+    } catch (err) {
+      setError(`${job.title} (${job.company}): ${err.message}`);
+    }
+  };
+
   const handleGenerateOne = async (job) => {
     setError(null);
     await refreshResume();
@@ -712,6 +724,7 @@ export default function App() {
         onEdit={setEditingJob}
         onOpenCompany={setActiveCompany}
         onGenerate={handleGenerateOne}
+        onUploadDocument={handleUploadDocument}
         generatingIds={generatingIds}
         flaggedCompanies={flaggedCompanies}
         favoriteCompanies={favoriteCompanies}

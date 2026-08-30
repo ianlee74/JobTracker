@@ -125,21 +125,49 @@ function RejectionReason({ job, onUpdate, onDone }) {
 }
 
 // "Resume · Cover letter" links once documents have been generated for a job.
-// They open inline; the ⬇ next to each downloads it with a friendly filename.
-function DocLinks({ job }) {
+// They open inline; the ⬇ next to each downloads it with a friendly filename,
+// and the ⬆ uploads a hand-customized file that replaces the generated one.
+function DocLinks({ job, onUpload }) {
+  const fileInput = useRef(null);
+  const uploadKind = useRef(null);
   const ORDER = ['resume', 'cover_letter'];
   const kinds = (job.doc_kinds || '').split(',').filter(Boolean)
     .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   if (!kinds.length) return null;
   const LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
+
+  const pickFile = (kind) => {
+    uploadKind.current = kind;
+    fileInput.current.value = ''; // re-selecting the same file still fires change
+    fileInput.current.click();
+  };
+
   return (
     <div className="doc-links">
       📄{kinds.map(kind => (
         <span key={kind} className="doc-link-pair">
           <a href={documentUrl(job.id, kind)} target="_blank" rel="noopener noreferrer">{LABELS[kind] || kind}</a>
           <a href={documentUrl(job.id, kind, true)} title={`Download ${(LABELS[kind] || kind).toLowerCase()}`} className="doc-dl">⬇</a>
+          <button
+            type="button"
+            className="doc-upload"
+            title={`Upload your edited ${(LABELS[kind] || kind).toLowerCase()} to replace this one`}
+            onClick={() => pickFile(kind)}
+          >
+            ⬆
+          </button>
         </span>
       ))}
+      <input
+        ref={fileInput}
+        type="file"
+        hidden
+        accept=".docx,.pdf,.md,.txt,.html"
+        onChange={e => {
+          const file = e.target.files[0];
+          if (file) onUpload(job, uploadKind.current, file);
+        }}
+      />
     </div>
   );
 }
@@ -160,7 +188,7 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
@@ -172,7 +200,7 @@ function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, 
       <td className="cell-title" rowSpan={span}>
         <a href={jobHref(job.url)} target="_blank" rel="noopener noreferrer">{job.title}</a>
         {job.fit && <div className="fit">{job.fit}</div>}
-        <DocLinks job={job} />
+        <DocLinks job={job} onUpload={onUploadDocument} />
       </td>
       <td>
         <button className="company-link" onClick={() => onOpenCompany(job.company)} title="Open company page">
@@ -295,7 +323,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
+export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -329,6 +357,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, o
               onEdit={onEdit}
               onOpenCompany={onOpenCompany}
               onGenerate={onGenerate}
+              onUploadDocument={onUploadDocument}
               generating={generatingIds.has(job.id)}
               companyNotInterested={flaggedCompanies.has(job.company)}
               companyFavorite={favoriteCompanies.has(job.company)}

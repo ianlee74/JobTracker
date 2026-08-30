@@ -784,6 +784,15 @@ tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
 .doc-links a { color: var(--accent); text-decoration: none; }
 .doc-links a:hover { text-decoration: underline; }
 .doc-dl { font-size: 11px; }
+.doc-upload {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--accent);
+}
+.doc-upload:hover { text-decoration: underline; }
 
 .settings-form { max-width: 560px; }
 .settings-hint {
