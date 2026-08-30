@@ -84,7 +84,7 @@ JobTracker can generate a resume and cover letter tailored to a specific posting
 
 Generate from the ✨ button on any job row, from **✨ Generate for Interested** in the header (batch over every `Interested` job, skipping ones that already have documents), or from Claude via the `generate_documents` MCP tool. Each job gets its own subfolder (`<id> - <company> - <title>`) containing the resume and cover letter (`.docx` or `.md`, matching the standard resume's format); the `job_documents` table stores their relative paths. Local `file://` postings are sent to the model directly; http(s) postings are fetched by the model via web fetch.
 
-The writing instructions live in `skills/tailored-resume/SKILL.md` and `skills/tailored-cover-letter/SKILL.md` — edit those files to change how the documents are written.
+The writing instructions live in `skills/tailored-resume/SKILL.md` and `skills/tailored-cover-letter/SKILL.md` — edit those files to change how the documents are written. Each skill can also pick its own model with a `model:` key in the frontmatter (e.g. `model: claude-sonnet-5`); without one, the server's default (`claude-opus-5`) is used.
 
 ## Interested-jobs digest email & candidate feedback
 

@@ -1,6 +1,7 @@
 ---
 name: tailored-resume
 description: Write a resume tailored to one specific job posting, grounded in the candidate's standard resume. Used by JobTracker's document generator; edit this file to change how tailored resumes are written.
+model: claude-opus-5
 ---
 
 # Tailored Resume
