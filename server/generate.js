@@ -390,15 +390,16 @@ export async function saveUploadedDocument(job, kind, originalName, buffer) {
   return doc;
 }
 
-// Deletes a job's documents: the files (only ever inside the person's
-// documents tree), their now-empty per-job folder, and the DB rows — rows are
-// removed even when their files are already gone, so a stale entry can always
-// be cleared. Returns the kinds that had rows.
-export async function deleteJobDocumentFiles(job) {
+// Deletes a job's documents — one kind, or both when kind is omitted: the
+// files (only ever inside the person's documents tree), the per-job folder
+// once it's empty, and the DB rows — rows are removed even when their files
+// are already gone, so a stale entry can always be cleared. Returns the kinds
+// that had rows.
+export async function deleteJobDocumentFiles(job, kind) {
   const person = getPerson(job.person_id);
   if (!person) throw new Error(`Job ${job.id} belongs to an unknown person (id ${job.person_id})`);
   const base = path.resolve(documentsDir(person));
-  const docs = listJobDocuments(job.id);
+  const docs = listJobDocuments(job.id).filter(d => !kind || d.kind === kind);
   const inTree = (p) => p.startsWith(base + path.sep);
   for (const doc of docs) {
     const file = path.resolve(base, doc.path);
@@ -408,18 +409,39 @@ export async function deleteJobDocumentFiles(job) {
   for (const folder of new Set(docs.map(d => path.dirname(path.resolve(base, d.path))))) {
     if (inTree(folder)) await rmdir(folder).catch(() => {});
   }
-  deleteJobDocuments(job.id);
+  deleteJobDocuments(job.id, kind);
   return docs.map(d => d.kind);
 }
 
-// Generate the tailored resume and cover letter for one job, using the owning
-// person's standard resume and documents folder. With skipExisting, jobs that
-// already have both documents are skipped (used by batch runs so a re-run
-// only fills gaps). A document only counts as existing when its file is still
-// on disk — deleting the files is how a user asks for fresh ones, and the DB
-// row alone must not keep the job skipped.
-// Without skipExisting, existing documents are never silently overwritten:
-// the caller must delete them first (🗑 in the UI / delete endpoint).
+// Plain text of the job's existing tailored resume, for cover-letter
+// consistency when only the letter is being regenerated. Returns null when it
+// can't be extracted (missing file, or a format like a hand-uploaded PDF).
+async function existingResumeText(person, job) {
+  const doc = getJobDocument(job.id, 'resume');
+  if (!doc) return null;
+  const file = path.resolve(documentsDir(person), doc.path);
+  const ext = path.extname(file).toLowerCase();
+  try {
+    if (ext === '.docx') return (await mammoth.extractRawText({ buffer: await readFile(file) })).value;
+    if (TEXT_EXTS.has(ext)) return await readFile(file, 'utf8');
+  } catch { /* fall through */ }
+  return null;
+}
+
+// The cover-letter instruction's trailer: the tailored resume it should stay
+// consistent with, when one is available as text.
+function coverLetterSuffix(resumeText) {
+  return resumeText
+    ? `\n\n# Tailored resume\n\nThe resume below was written for this application — keep the letter consistent with it:\n\n${resumeText}`
+    : '';
+}
+
+// Generate the tailored documents one job is missing, using the owning
+// person's standard resume and documents folder. Only absent documents are
+// written — one that exists (its DB row's file still on disk) is never
+// overwritten, so regenerating requires deleting it first; with both present,
+// skipExisting reports the job skipped (batch runs) and otherwise it's an
+// error telling the caller to delete first.
 export async function generateJobDocuments({ id, url, personId }, { skipExisting = false } = {}) {
   const job = getJob({ id, url, personId });
   if (!job) throw new Error('Job not found');
@@ -429,11 +451,13 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
     const doc = getJobDocument(job.id, kind);
     return doc && existsSync(path.resolve(documentsDir(person), doc.path));
   };
-  if (skipExisting && hasDocument('resume') && hasDocument('cover_letter')) {
-    return { job_id: job.id, title: job.title, company: job.company, skipped: true, documents: [] };
-  }
-  if (hasDocument('resume') || hasDocument('cover_letter')) {
-    throw new Error('This job already has documents — delete them first (🗑 next to the document links), then generate again.');
+  const needResume = !hasDocument('resume');
+  const needCover = !hasDocument('cover_letter');
+  if (!needResume && !needCover) {
+    if (skipExisting) {
+      return { job_id: job.id, title: job.title, company: job.company, skipped: true, documents: [] };
+    }
+    throw new Error('This job already has both documents — delete one or both (from the document\'s menu), then generate again.');
   }
 
   const [source, resumeSkill, coverSkill] = await Promise.all([
@@ -464,47 +488,53 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
     ...(posting.block ? [posting.block] : [])
   ];
 
-  let documents;
+  const documents = [];
+  // The cover-letter call gets the tailored resume as plain text — enough for
+  // consistency without doubling the XML in context. When only the letter is
+  // regenerated, the existing resume file provides that text instead.
+  let resumeText = needResume ? null : await existingResumeText(person, job);
   if (source.format === 'docx') {
-    const resumeXml = await generateDocxXml({
-      contextBlocks,
-      tools: posting.tools,
-      model: resumeSkill.model,
-      debugLabel: `job ${job.id} resume`,
-      instruction: `${resumeSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}`
-    });
-    const resumeDocx = await buildDocx(source.buffer, resumeXml);
-    // The cover-letter call gets the tailored resume as plain text — enough
-    // for consistency without doubling the XML in context.
-    const resumeText = (await mammoth.extractRawText({ buffer: resumeDocx })).value;
-    const coverXml = await generateDocxXml({
-      contextBlocks,
-      tools: posting.tools,
-      model: coverSkill.model,
-      debugLabel: `job ${job.id} cover letter`,
-      instruction: `${coverSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
-    });
-    documents = [
-      await saveDocument(person, job, 'resume', 'resume.docx', resumeDocx),
-      await saveDocument(person, job, 'cover_letter', 'cover-letter.docx', await buildDocx(source.buffer, coverXml))
-    ];
+    if (needResume) {
+      const resumeXml = await generateDocxXml({
+        contextBlocks,
+        tools: posting.tools,
+        model: resumeSkill.model,
+        debugLabel: `job ${job.id} resume`,
+        instruction: `${resumeSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}`
+      });
+      const resumeDocx = await buildDocx(source.buffer, resumeXml);
+      resumeText = (await mammoth.extractRawText({ buffer: resumeDocx })).value;
+      documents.push(await saveDocument(person, job, 'resume', 'resume.docx', resumeDocx));
+    }
+    if (needCover) {
+      const coverXml = await generateDocxXml({
+        contextBlocks,
+        tools: posting.tools,
+        model: coverSkill.model,
+        debugLabel: `job ${job.id} cover letter`,
+        instruction: `${coverSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}${coverLetterSuffix(resumeText)}`
+      });
+      documents.push(await saveDocument(person, job, 'cover_letter', 'cover-letter.docx', await buildDocx(source.buffer, coverXml)));
+    }
   } else {
-    const resumeText = await generateDocument({
-      contextBlocks,
-      tools: posting.tools,
-      model: resumeSkill.model,
-      instruction: `${resumeSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}`
-    });
-    const coverText = await generateDocument({
-      contextBlocks,
-      tools: posting.tools,
-      model: coverSkill.model,
-      instruction: `${coverSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}\n\n# Tailored resume\n\nThe resume below was just written for this application — keep the letter consistent with it:\n\n${resumeText}`
-    });
-    documents = [
-      await saveDocument(person, job, 'resume', 'resume.md', resumeText),
-      await saveDocument(person, job, 'cover_letter', 'cover-letter.md', coverText)
-    ];
+    if (needResume) {
+      resumeText = await generateDocument({
+        contextBlocks,
+        tools: posting.tools,
+        model: resumeSkill.model,
+        instruction: `${resumeSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}`
+      });
+      documents.push(await saveDocument(person, job, 'resume', 'resume.md', resumeText));
+    }
+    if (needCover) {
+      const coverText = await generateDocument({
+        contextBlocks,
+        tools: posting.tools,
+        model: coverSkill.model,
+        instruction: `${coverSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}${coverLetterSuffix(resumeText)}`
+      });
+      documents.push(await saveDocument(person, job, 'cover_letter', 'cover-letter.md', coverText));
+    }
   }
   return { job_id: job.id, title: job.title, company: job.company, skipped: false, documents };
 }
