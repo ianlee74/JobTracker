@@ -2,11 +2,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { XMLValidator } from 'fast-xml-parser';
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm, rmdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { getJob, listJobs, getCompany, getPerson, getJobDocument, upsertJobDocument, DB_PATH } from './db.js';
+import { getJob, listJobs, getCompany, getPerson, getJobDocument, upsertJobDocument, listJobDocuments, deleteJobDocuments, DB_PATH } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
@@ -293,7 +293,8 @@ const UPLOAD_EXTS = new Set(['.docx', '.pdf', '.md', '.txt', '.html']);
 
 // Stores a hand-edited resume or cover letter uploaded through the UI in the
 // job's documents folder, replacing the generated file for that kind (it
-// becomes what /api/document serves; a later ✨ regeneration overwrites it).
+// becomes what /api/document serves, until the documents are deleted and
+// regenerated).
 export async function saveUploadedDocument(job, kind, originalName, buffer) {
   const person = getPerson(job.person_id);
   if (!person) throw new Error(`Job ${job.id} belongs to an unknown person (id ${job.person_id})`);
@@ -314,12 +315,36 @@ export async function saveUploadedDocument(job, kind, originalName, buffer) {
   return doc;
 }
 
+// Deletes a job's documents: the files (only ever inside the person's
+// documents tree), their now-empty per-job folder, and the DB rows — rows are
+// removed even when their files are already gone, so a stale entry can always
+// be cleared. Returns the kinds that had rows.
+export async function deleteJobDocumentFiles(job) {
+  const person = getPerson(job.person_id);
+  if (!person) throw new Error(`Job ${job.id} belongs to an unknown person (id ${job.person_id})`);
+  const base = path.resolve(documentsDir(person));
+  const docs = listJobDocuments(job.id);
+  const inTree = (p) => p.startsWith(base + path.sep);
+  for (const doc of docs) {
+    const file = path.resolve(base, doc.path);
+    if (inTree(file)) await rm(file, { force: true });
+  }
+  // Best-effort tidy: rmdir only removes a folder that is now empty.
+  for (const folder of new Set(docs.map(d => path.dirname(path.resolve(base, d.path))))) {
+    if (inTree(folder)) await rmdir(folder).catch(() => {});
+  }
+  deleteJobDocuments(job.id);
+  return docs.map(d => d.kind);
+}
+
 // Generate the tailored resume and cover letter for one job, using the owning
 // person's standard resume and documents folder. With skipExisting, jobs that
 // already have both documents are skipped (used by batch runs so a re-run
 // only fills gaps). A document only counts as existing when its file is still
 // on disk — deleting the files is how a user asks for fresh ones, and the DB
 // row alone must not keep the job skipped.
+// Without skipExisting, existing documents are never silently overwritten:
+// the caller must delete them first (🗑 in the UI / delete endpoint).
 export async function generateJobDocuments({ id, url, personId }, { skipExisting = false } = {}) {
   const job = getJob({ id, url, personId });
   if (!job) throw new Error('Job not found');
@@ -331,6 +356,9 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
   };
   if (skipExisting && hasDocument('resume') && hasDocument('cover_letter')) {
     return { job_id: job.id, title: job.title, company: job.company, skipped: true, documents: [] };
+  }
+  if (hasDocument('resume') || hasDocument('cover_letter')) {
+    throw new Error('This job already has documents — delete them first (🗑 next to the document links), then generate again.');
   }
 
   const [source, resumeSkill, coverSkill] = await Promise.all([

@@ -74,6 +74,10 @@ export const generateDocuments = (id, opts = {}) =>
   request(`/api/jobs/${id}/generate`, { method: 'POST', body: JSON.stringify(opts) });
 export const documentUrl = (id, kind, download) =>
   `/api/document?job=${id}&kind=${kind}${download ? '&download=1' : ''}`;
+// Deletes a job's documents (files + DB records) — required before the job's
+// documents can be generated again.
+export const deleteJobDocuments = (id) =>
+  request(`/api/jobs/${id}/documents`, { method: 'DELETE' });
 // Replaces a job's generated resume or cover letter with a hand-customized
 // file; kind is 'resume' or 'cover_letter'.
 export const uploadJobDocument = (id, kind, file) =>

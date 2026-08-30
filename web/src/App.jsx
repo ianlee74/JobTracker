@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, signOut } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
@@ -428,6 +428,19 @@ export default function App() {
     }
   };
 
+  // Delete a job's documents (🗑 next to its document links, already
+  // confirmed there) — the required step before generating fresh ones.
+  const handleDeleteDocuments = async (job) => {
+    setError(null);
+    try {
+      await deleteJobDocuments(job.id);
+      setJobs(prev => prev.map(j => (j.id === job.id ? { ...j, doc_kinds: '' } : j)));
+      flashSaved();
+    } catch (err) {
+      setError(`${job.title} (${job.company}): ${err.message}`);
+    }
+  };
+
   const handleGenerateOne = async (job) => {
     setError(null);
     await refreshResume();
@@ -725,6 +738,7 @@ export default function App() {
         onOpenCompany={setActiveCompany}
         onGenerate={handleGenerateOne}
         onUploadDocument={handleUploadDocument}
+        onDeleteDocuments={handleDeleteDocuments}
         generatingIds={generatingIds}
         flaggedCompanies={flaggedCompanies}
         favoriteCompanies={favoriteCompanies}
