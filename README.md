@@ -65,7 +65,7 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 | `add_person` | Add a person to track jobs for |
 | `update_person` | Rename a person or set their email address |
 | `generate_interested_email` | Compose the digest email of one person's `Interested` jobs, with candidate feedback links |
-| `generate_documents` | Tailored resume + cover letter for one job, or all `Interested` jobs |
+| `generate_documents` | Tailored resume + cover letter for one job |
 | `configure_document_generation` | View/set one person's standard resume path and documents folder |
 
 Tools that need a person (`add_jobs`, `configure_document_generation`, …) take a `person` argument — the person's name. It can be omitted while only one person is tracked. Job posting URLs are unique **per person**, so two people can track the same posting independently; URL-based lookups accept `person` to disambiguate.
@@ -82,7 +82,7 @@ JobTracker can generate a resume and cover letter tailored to a specific posting
 2. Open **Settings** (⚙ in the UI) and set the selected person's **Standard resume** — use **Choose file…** (native Windows dialog) or drag-and-drop. Either way the server stores a snapshot it can read, and the browser keeps a link to your original file (File System Access API), refreshing the snapshot from it automatically before every generation — so edits to your resume are always picked up. A **⟳ Refresh from original now** button in Settings forces a sync, and typing/pasting a path into the field still points at a server-side file directly (read in place, no snapshot). Supported formats: PDF, Word `.docx`, Markdown, or plain text. The resume is the source of truth — generated documents never claim anything that isn't in it. With a `.docx` resume, generated documents are **`.docx` files that mirror the original's formatting**: Claude writes a new `word/document.xml` reusing the original's styles, and it's packaged into a copy of your resume's own file (same styles, fonts, numbering, headers, page setup). Other resume formats produce Markdown documents.
 3. Optionally change the **Documents folder** (default: `data/documents`).
 
-Generate from the ✨ button on any job row, from **✨ Generate for Interested** in the header (batch over every `Interested` job, skipping ones that already have documents), or from Claude via the `generate_documents` MCP tool. Each job gets its own subfolder (`<id> - <company> - <title>`) containing the resume and cover letter (`.docx` or `.md`, matching the standard resume's format); the `job_documents` table stores their relative paths. Local `file://` postings are sent to the model directly; http(s) postings are fetched by the model via web fetch.
+Generate from the ✨ button on any job row, or from Claude via the `generate_documents` MCP tool. Each job gets its own subfolder (`<id> - <company> - <title>`) containing the resume and cover letter (`.docx` or `.md`, matching the standard resume's format); the `job_documents` table stores their relative paths. Local `file://` postings are sent to the model directly; http(s) postings are fetched by the model via web fetch.
 
 The writing instructions live in `skills/tailored-resume/SKILL.md` and `skills/tailored-cover-letter/SKILL.md` — edit those files to change how the documents are written. Each skill can also pick its own model with a `model:` key in the frontmatter (e.g. `model: claude-sonnet-5`); without one, the server's default (`claude-opus-5`) is used.
 
@@ -129,7 +129,7 @@ The web server also exposes the data at `http://localhost:7080/api`:
 - `GET /api/settings?person=<id>`, `PATCH /api/settings?person=<id>` — that person's document-generation settings (and `name`, `email`)
 - `POST /api/interested-email?person=<id>` — compose the Interested-jobs digest email (`{ to, subject, html, text }`); `GET /api/interested-email/preview?person=<id>` renders it with copy buttons
 - `GET|POST /respond/<token>/<action>` — candidate feedback endpoints linked from the digest email (`applied`, `interested`, `not-interested`)
-- `POST /api/jobs/:id/generate` — generate tailored resume + cover letter (body: `{ "skip_existing": true }` to no-op when both exist)
+- `POST /api/jobs/:id/generate` — generate tailored resume + cover letter
 - `GET /api/document?job=:id&kind=resume|cover_letter` — serve a generated document (`&download=1` for attachment)
 
 ## Development
