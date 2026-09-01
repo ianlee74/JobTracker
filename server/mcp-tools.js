@@ -55,7 +55,7 @@ function ok(data) {
 
 server.registerTool('list_people', {
   title: 'List people',
-  description: 'List the people (candidates) whose job searches are tracked, with each person\'s job count and document-generation config (standard resume path, documents folder).',
+  description: 'List the people (candidates) whose job searches are tracked, with each person\'s job count, document-generation config (standard resume path, documents folder), and search_instructions — that person\'s own guidance for how to look for their jobs. Before searching for jobs for a person, read their search_instructions and follow them.',
   inputSchema: {}
 }, async () => ok(listPeople()));
 
@@ -69,17 +69,19 @@ server.registerTool('add_person', {
 
 server.registerTool('update_person', {
   title: 'Update a person',
-  description: 'Rename a person and/or set their email address (the recipient of their Interested-jobs digest email). (Per-person resume/documents settings are changed with configure_document_generation.)',
+  description: 'Rename a person, set their email address (the recipient of their Interested-jobs digest email), and/or set their search_instructions (their standing guidance for how an AI should look for jobs for them — target roles, locations, salary floor, preferred sources, deal-breakers). (Per-person resume/documents settings are changed with configure_document_generation.)',
   inputSchema: {
     person: z.string().describe('The person\'s current name (or numeric id)'),
     new_name: z.string().optional().describe('The new name'),
-    email: z.string().optional().describe('The person\'s email address (empty string to clear)')
+    email: z.string().optional().describe('The person\'s email address (empty string to clear)'),
+    search_instructions: z.string().optional().describe('Job-search instructions for this person, followed by the AI whenever it searches for their jobs. Replaces the existing instructions (empty string to clear).')
   }
-}, async ({ person, new_name, email }) => {
+}, async ({ person, new_name, email, search_instructions }) => {
   const fields = {};
   if (new_name !== undefined) fields.name = new_name;
   if (email !== undefined) fields.email = email;
-  if (!Object.keys(fields).length) throw new Error('Provide new_name and/or email');
+  if (search_instructions !== undefined) fields.search_instructions = search_instructions;
+  if (!Object.keys(fields).length) throw new Error('Provide new_name, email, and/or search_instructions');
   return ok(updatePerson(resolvePerson(person).id, fields));
 });
 

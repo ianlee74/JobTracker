@@ -341,7 +341,7 @@ th.sortable:hover { color: var(--text); }
   gap: 8px;
 }
 
-.form-grid input, .form-grid select {
+.form-grid input, .form-grid select, .form-grid textarea {
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -351,6 +351,8 @@ th.sortable:hover { color: var(--text); }
   font-family: inherit;
   font-weight: 400;
 }
+
+.form-grid textarea { min-height: 72px; resize: vertical; }
 
 .url-row, .salary-range-row {
   display: flex;

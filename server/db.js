@@ -219,6 +219,17 @@ db.exec(`
   }
 }
 
+// Migration: per-person job-search instructions — free-form guidance for the
+// AI that hunts for this person's jobs (target roles, locations, salary floor,
+// preferred sources, deal-breakers). Stored here so the instructions travel
+// with the database instead of living in some assistant's own memory.
+{
+  const cols = db.prepare('PRAGMA table_info(people)').all().map(c => c.name);
+  if (!cols.includes('search_instructions')) {
+    db.exec("ALTER TABLE people ADD COLUMN search_instructions TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 // Migration: per-job feedback token. Minted when a job first goes into a
 // digest email; its /respond/<token> links let the candidate report back
 // without authentication, so the token must be unguessable.
@@ -343,7 +354,7 @@ export function addPerson(name) {
   return getPerson(info.lastInsertRowid);
 }
 
-const PERSON_FIELDS = ['name', 'resume_path', 'documents_dir', 'email'];
+const PERSON_FIELDS = ['name', 'resume_path', 'documents_dir', 'email', 'search_instructions'];
 
 export function updatePerson(id, fields) {
   const person = getPerson(id);
