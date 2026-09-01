@@ -33,6 +33,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
   const [settings, setSettings] = useState(null);
   const [name, setName] = useState(personName || '');
   const [email, setEmail] = useState('');
+  const [searchInstructions, setSearchInstructions] = useState('');
   const [resumePath, setResumePath] = useState('');
   const [documentsDir, setDocumentsDir] = useState('');
   const [link, setLink] = useState(null);
@@ -47,6 +48,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
         setSettings(s);
         setName(s.person_name);
         setEmail(s.email || '');
+        setSearchInstructions(s.search_instructions || '');
         setResumePath(s.resume_path);
         setDocumentsDir(s.documents_dir);
       })
@@ -133,7 +135,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
     setError(null);
     try {
       const path = cleanPath(resumePath);
-      await saveSettings(personId, { name, email: email.trim(), resume_path: path, documents_dir: cleanPath(documentsDir) });
+      await saveSettings(personId, { name, email: email.trim(), search_instructions: searchInstructions, resume_path: path, documents_dir: cleanPath(documentsDir) });
       // A manually entered path replaces the managed snapshot — the stored
       // handle no longer describes what generation reads, so drop it.
       if (link && path !== link.managedPath) {
@@ -190,6 +192,17 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
               />
               <span className="settings-hint">
                 Used as the recipient when generating the "Interested jobs" digest email for this person.
+              </span>
+            </label>
+            <label className="span-2">
+              Job search instructions
+              <textarea
+                value={searchInstructions}
+                onChange={e => setSearchInstructions(e.target.value)}
+                placeholder="e.g. Staff-level backend roles, remote or Austin, $180k+ base; skip agencies and anything requiring relocation."
+              />
+              <span className="settings-hint">
+                Standing guidance for the AI that searches for this person's jobs — target roles, locations, salary floor, preferred sources, deal-breakers.
               </span>
             </label>
             <label className="span-2">

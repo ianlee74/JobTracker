@@ -49,6 +49,8 @@ claude mcp add jobtracker -- node C:\Code\JobTracker\server\mcp-server.js
 
 Then update the Cowork job's instructions: instead of generating a new HTML file, call the `add_jobs` tool with the day's findings. Duplicate URLs are skipped automatically, so it's always safe to send everything found.
 
+Each person can also carry their own **Job search instructions** (Settings ⚙, or the `update_person` MCP tool) — standing guidance like target roles, locations, salary floor, preferred sources, and deal-breakers. They're returned by `list_people`, so an AI doing the searching reads each person's instructions from the tracker itself instead of keeping them in its own notes.
+
 ### MCP tools
 
 | Tool | Purpose |
@@ -61,9 +63,9 @@ Then update the Cowork job's instructions: instead of generating a new HTML file
 | `get_summary` | Counts by status + latest find date (optionally per person) |
 | `list_companies` | Every company with tracked jobs or saved info, incl. favorite / not-interested flags |
 | `update_company` | Save company info, mark it a favorite (its jobs win sort ties), or "not interested" (its jobs hide) |
-| `list_people` | The tracked candidates, with job counts and per-person config |
+| `list_people` | The tracked candidates, with job counts, per-person config, and their job-search instructions |
 | `add_person` | Add a person to track jobs for |
-| `update_person` | Rename a person or set their email address |
+| `update_person` | Rename a person, set their email address, or set their job-search instructions |
 | `generate_interested_email` | Compose the digest email of one person's `Interested` jobs, with candidate feedback links |
 | `generate_documents` | Tailored resume + cover letter for one job |
 | `configure_document_generation` | View/set one person's standard resume path and documents folder |

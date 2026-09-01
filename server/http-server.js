@@ -93,6 +93,7 @@ async function settingsPayload(person) {
     person_id: person.id,
     person_name: person.name,
     email: person.email,
+    search_instructions: person.search_instructions,
     resume_path: person.resume_path,
     documents_dir: person.documents_dir,
     documents_dir_effective: documentsDir(person),
