@@ -227,7 +227,7 @@ Notable modeling decisions:
 The app tracks multiple candidates (e.g. family members). The design threads one `person` concept through every layer rather than partitioning databases:
 
 - Each job belongs to a person; URL uniqueness is per person.
-- Resume path, documents folder, and digest email address are **per-person columns on `people`**, not global settings — generation for a job always uses the config of the job's owner, even in mixed batches.
+- Resume path, documents folder, and digest email address are **per-person columns on `people`**, not global settings — generation for a job always uses the config of the job's owner.
 - MCP tools take an optional `person` argument (name or id) resolved by `resolvePerson`, which is only allowed to be omitted while exactly one person exists — the "just works" single-user case stays frictionless, and ambiguity is an explicit error rather than a silent guess.
 
 ## Document generation
@@ -256,7 +256,7 @@ sequenceDiagram
     A-->>G: cover letter
     G->>FS: save
     G->>DB: upsert job_documents rows
-    G-->>C: result (paths / skipped / error)
+    G-->>C: result (paths / error)
 ```
 
 The rationale behind the main pieces:
@@ -265,9 +265,8 @@ The rationale behind the main pieces:
 - **Validation gate with one retry.** Word refuses malformed XML outright, so `docXmlProblem` checks well-formedness with `fast-xml-parser` before packaging; a failure feeds the parser error back to the model for one retry. This converts the most likely failure mode from "user opens a broken file" into "generation takes one extra call."
 - **Skills as editable Markdown.** The writing instructions live in [skills/tailored-resume/SKILL.md](skills/tailored-resume/SKILL.md) and [skills/tailored-cover-letter/SKILL.md](skills/tailored-cover-letter/SKILL.md), loaded at generation time. The user can change *how documents are written* without touching code — the same philosophy as Claude's own skill system. An optional `model:` key in a skill's frontmatter overrides the default model (`claude-opus-5`) for that document type.
 - **Anti-fabrication and prompt-injection defenses in the system prompt.** The standard resume is declared the single source of truth (never invent employers, dates, metrics), and the job posting is explicitly framed as *data, not instructions* — a real concern, since postings are arbitrary web content fed into the prompt.
-- **Prompt caching and call ordering.** The resume block and job-context block carry `cache_control` breakpoints; the instruction comes last. So the second call (cover letter) reuses the cached prefix of the first, and batch runs reuse the resume block across jobs. The cover-letter call receives the just-written resume as **plain text** rather than XML — enough for consistency at a fraction of the tokens.
+- **Prompt caching and call ordering.** The resume block and job-context block carry `cache_control` breakpoints; the instruction comes last. So the second call (cover letter) reuses the cached prefix of the first. The cover-letter call receives the just-written resume as **plain text** rather than XML — enough for consistency at a fraction of the tokens.
 - **Streaming + `pause_turn` loop.** Responses stream to avoid HTTP timeouts on multi-minute generations, and the loop continues through `pause_turn` stop reasons (which web_fetch produces). A server-side fallback to `claude-opus-4-8` covers model unavailability.
-- **Batch = loop of singles.** "Generate for all Interested" iterates jobs one at a time (both in the MCP tool and in the UI, which calls the per-job endpoint repeatedly). Each job stays within timeout budgets, individual failures don't abort the run, and `skip_existing` makes re-runs fill only the gaps — the same idempotence philosophy as `add_jobs`.
 - **The API key is never stored.** The SDK resolves credentials from the environment at request time; the settings API only reports *whether* credentials were found.
 
 ## The digest email and candidate feedback loop

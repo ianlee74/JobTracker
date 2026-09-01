@@ -6,7 +6,7 @@ import { readFile, writeFile, mkdir, rm, rmdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { getJob, listJobs, getCompany, getPerson, getJobDocument, upsertJobDocument, listJobDocuments, deleteJobDocuments, DB_PATH } from './db.js';
+import { getJob, getCompany, getPerson, getJobDocument, upsertJobDocument, listJobDocuments, deleteJobDocuments, DB_PATH } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
@@ -440,9 +440,8 @@ function coverLetterSuffix(resumeText) {
 // person's standard resume and documents folder. Only absent documents are
 // written — one that exists (its DB row's file still on disk) is never
 // overwritten, so regenerating requires deleting it first; with both present,
-// skipExisting reports the job skipped (batch runs) and otherwise it's an
-// error telling the caller to delete first.
-export async function generateJobDocuments({ id, url, personId }, { skipExisting = false } = {}) {
+// it's an error telling the caller to delete first.
+export async function generateJobDocuments({ id, url, personId }) {
   const job = getJob({ id, url, personId });
   if (!job) throw new Error('Job not found');
   const person = getPerson(job.person_id);
@@ -454,9 +453,6 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
   const needResume = !hasDocument('resume');
   const needCover = !hasDocument('cover_letter');
   if (!needResume && !needCover) {
-    if (skipExisting) {
-      return { job_id: job.id, title: job.title, company: job.company, skipped: true, documents: [] };
-    }
     throw new Error('This job already has both documents — delete one or both (from the document\'s menu), then generate again.');
   }
 
@@ -536,27 +532,5 @@ export async function generateJobDocuments({ id, url, personId }, { skipExisting
       documents.push(await saveDocument(person, job, 'cover_letter', 'cover-letter.md', coverText));
     }
   }
-  return { job_id: job.id, title: job.title, company: job.company, skipped: false, documents };
-}
-
-// Batch: every job currently in "Interested" (optionally for one person; each
-// job always uses its own person's config). Individual failures don't stop
-// the run; each job's outcome is reported.
-export async function generateForInterested({ personId, skipExisting = true } = {}) {
-  const jobs = listJobs({ personId, status: 'Interested', excludeNotInterestedCompanies: true });
-  const results = [];
-  for (const job of jobs) {
-    try {
-      results.push(await generateJobDocuments({ id: job.id }, { skipExisting }));
-    } catch (err) {
-      results.push({ job_id: job.id, title: job.title, company: job.company, error: err.message });
-    }
-  }
-  return {
-    total: jobs.length,
-    generated: results.filter(r => r.documents?.length).length,
-    skipped: results.filter(r => r.skipped).length,
-    failed: results.filter(r => r.error).length,
-    results
-  };
+  return { job_id: job.id, title: job.title, company: job.company, documents };
 }

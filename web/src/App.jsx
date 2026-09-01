@@ -263,7 +263,6 @@ export default function App() {
   // filter would hide them, until a rejection reason has been chosen (and the
   // custom text entered when "Other" is picked).
   const [pinnedIds, setPinnedIds] = useState(new Set());
-  const [batchProgress, setBatchProgress] = useState(null); // { done, total } while a batch runs
 
   const refresh = useCallback(async () => {
     try {
@@ -382,11 +381,11 @@ export default function App() {
   };
 
   // Tailored resume + cover letter for one job via the server's Anthropic API
-  // call. skipExisting is used by the batch so a re-run only fills gaps.
-  const handleGenerate = async (job, { skipExisting = false } = {}) => {
+  // call.
+  const handleGenerate = async (job) => {
     setGeneratingIds(prev => new Set(prev).add(job.id));
     try {
-      const result = await generateDocuments(job.id, { skip_existing: skipExisting });
+      const result = await generateDocuments(job.id);
       if (result.documents?.length) {
         // Only missing documents are generated, so merge with what the job
         // already had rather than replacing it.
@@ -457,34 +456,6 @@ export default function App() {
     } catch (err) {
       setError(`${job.title} (${job.company}): ${err.message}`);
     }
-  };
-
-  // Batch over every Interested job, one request at a time so each HTTP call
-  // stays short-ish and progress is visible. Failures don't stop the run.
-  const handleGenerateInterested = async () => {
-    const targets = jobs.filter(j => j.status === 'Interested' && !flaggedCompanies.has(j.company));
-    if (!targets.length) return;
-    const withDocs = targets.filter(t => (t.doc_kinds || '').includes('resume')).length;
-    const ok = window.confirm(
-      `Generate a tailored resume & cover letter for ${targets.length} Interested job${targets.length === 1 ? '' : 's'}?` +
-      (withDocs ? `\n\n${withDocs} already have documents and will be skipped.` : '') +
-      '\n\nThis calls the Anthropic API and takes a few minutes per job.'
-    );
-    if (!ok) return;
-    setError(null);
-    await refreshResume();
-    setBatchProgress({ done: 0, total: targets.length });
-    const failures = [];
-    for (const [i, job] of targets.entries()) {
-      try {
-        await handleGenerate(job, { skipExisting: true });
-      } catch (err) {
-        failures.push(`${job.title} (${job.company}): ${err.message}`);
-      }
-      setBatchProgress({ done: i + 1, total: targets.length });
-    }
-    setBatchProgress(null);
-    if (failures.length) setError(`Generation failed for ${failures.length} job(s) — ${failures.join(' · ')}`);
   };
 
   const handleCompanySave = async (name, fields) => {
@@ -618,16 +589,6 @@ export default function App() {
               title='Preview an email digest of every "Interested" job, with feedback links for the candidate'
             >
               ✉ Email Interested
-            </button>
-          )}
-          {!activeCompany && (
-            <button
-              className="clear-btn generate-all-btn"
-              onClick={handleGenerateInterested}
-              disabled={Boolean(batchProgress) || !jobs.some(j => j.status === 'Interested' && !flaggedCompanies.has(j.company))}
-              title='Generate a tailored resume & cover letter for every job in "Interested" status'
-            >
-              {batchProgress ? `Generating ${batchProgress.done}/${batchProgress.total}…` : '✨ Generate for Interested'}
             </button>
           )}
           {!activeCompany && <AddJobForm jobs={jobs} onAdd={handleAdd} />}

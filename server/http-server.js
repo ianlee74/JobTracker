@@ -510,8 +510,7 @@ async function handleApi(req, res, url, user) {
   }
 
   // Generate the tailored resume + cover letter for one job. Slow (two model
-  // calls); the UI batches "all Interested" by calling this per job so each
-  // request stays well under browser/server timeouts.
+  // calls happen server-side before this responds).
   if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 4 && parts[3] === 'generate') {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
@@ -519,9 +518,8 @@ async function handleApi(req, res, url, user) {
       const job = getJob({ id });
       if (!job || job.person_id !== user.person_id) return json(res, 404, { error: 'Job not found' });
     }
-    const body = await readBody(req);
     try {
-      return json(res, 200, await generateJobDocuments({ id }, { skipExisting: Boolean(body.skip_existing) }));
+      return json(res, 200, await generateJobDocuments({ id }));
     } catch (err) {
       return json(res, err.message === 'Job not found' ? 404 : 500, { error: err.message });
     }

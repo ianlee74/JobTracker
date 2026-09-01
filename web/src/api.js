@@ -70,8 +70,8 @@ export const saveSettings = (personId, fields) =>
   request(`/api/settings?person=${personId}`, { method: 'PATCH', body: JSON.stringify(fields) });
 // Generates the tailored resume + cover letter for one job. Slow (minutes) —
 // two model calls happen server-side before this resolves.
-export const generateDocuments = (id, opts = {}) =>
-  request(`/api/jobs/${id}/generate`, { method: 'POST', body: JSON.stringify(opts) });
+export const generateDocuments = (id) =>
+  request(`/api/jobs/${id}/generate`, { method: 'POST' });
 export const documentUrl = (id, kind, download) =>
   `/api/document?job=${id}&kind=${kind}${download ? '&download=1' : ''}`;
 // Deletes a job's documents (files + DB records) — one kind, or both when

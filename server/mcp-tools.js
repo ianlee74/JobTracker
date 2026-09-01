@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
-import { generateJobDocuments, generateForInterested, documentsDir, hasApiCredentials } from './generate.js';
+import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 
 // Registers every JobTracker tool on a fresh McpServer. Shared between the
@@ -200,19 +200,16 @@ server.registerTool('update_company', {
 
 server.registerTool('generate_documents', {
   title: 'Generate tailored resume & cover letter',
-  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), or to every job in "Interested" status, using the Anthropic API and the owning person\'s standard resume. Files are written to a per-job folder under that person\'s documents directory. Slow: allow a few minutes per job.',
+  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), using the Anthropic API and the owning person\'s standard resume. Files are written to a per-job folder under that person\'s documents directory. Slow: allow a few minutes per job.',
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
     url: z.string().optional().describe('Job posting URL (alternative to id)'),
-    person: z.string().optional().describe('With all_interested: limit the batch to this person\'s jobs. With url: disambiguates which person\'s job. Name (or numeric id).'),
-    all_interested: z.boolean().optional().describe('Generate for every job in "Interested" status instead of a single job'),
-    skip_existing: z.boolean().optional().describe('Skip jobs that already have both documents (default true for all_interested, false for a single job)')
+    person: z.string().optional().describe('With url: disambiguates which person\'s job. Name (or numeric id).')
   }
-}, async ({ id, url, person, all_interested, skip_existing }) => {
+}, async ({ id, url, person }) => {
   const personId = person ? resolvePerson(person).id : undefined;
-  if (all_interested) return ok(await generateForInterested({ personId, skipExisting: skip_existing ?? true }));
-  if (id == null && !url) throw new Error('Provide id or url, or set all_interested: true');
-  return ok(await generateJobDocuments({ id, url, personId }, { skipExisting: Boolean(skip_existing) }));
+  if (id == null && !url) throw new Error('Provide id or url');
+  return ok(await generateJobDocuments({ id, url, personId }));
 });
 
 server.registerTool('generate_interested_email', {
