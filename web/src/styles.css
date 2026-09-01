@@ -410,7 +410,13 @@ tr:last-child td { border-bottom: none; }
    under the note row, so the main row's own cells drop theirs (the rowspanned
    Found/Title/Actions cells keep it — theirs paints below the note row). */
 tr.main-row td:not([rowspan]) { border-bottom: none; }
-tr.note-row td { padding-top: 0; }
+/* A tall rowspanned cell (Found/Title/Actions) leaves surplus height to split
+   between the job's two rows. Pinning the main row at 1px sends all of it to
+   the note row; height: 1px on its td then lets the .note-pair 100% chain
+   stretch the notes to fill that space. (1px acts as a minimum — content
+   still sets the real height.) */
+tr.main-row { height: 1px; }
+tr.note-row td { padding-top: 0; height: 1px; }
 
 .note-label {
   font-size: 11px;
@@ -882,8 +888,10 @@ tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
 .user-name { font-size: 13px; color: var(--text-muted, #555); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signout-btn { font-size: 12px; padding: 4px 10px; }
 
-.note-pair { display: flex; gap: 16px; }
-.note-block { flex: 1; min-width: 0; }
+.note-pair { display: flex; gap: 16px; height: 100%; }
+.note-block { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.note-block .note-input,
+.note-block .note-readonly { flex: 1; }
 
 .note-readonly {
   font-size: 13px;
