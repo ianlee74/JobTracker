@@ -126,9 +126,11 @@ function RejectionReason({ job, onUpdate, onDone }) {
 
 const DOC_LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
 
-// One document's control: clicking the name opens a small menu with Open,
+// One document's control: clicking the name opens a small menu with
 // Download, Upload replacement, and Delete. Delete removes just this
-// document, freeing ✨ to regenerate it.
+// document, freeing ✨ to regenerate it. (There is deliberately no "Open":
+// generated documents are .docx, which browsers can't display inline, so it
+// would only ever be a second Download.)
 function DocMenu({ job, kind, onUpload, onDelete }) {
   // null = closed; when open, the fixed-position coordinates of the menu.
   // Fixed positioning escapes the table wrapper's scroll clipping, which
@@ -174,15 +176,6 @@ function DocMenu({ job, kind, onUpload, onDelete }) {
       </button>
       {open && (
         <div className="doc-menu" style={menuPos}>
-          <a
-            className="doc-menu-item"
-            href={documentUrl(job.id, kind)}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={closeMenu}
-          >
-            Open
-          </a>
           <a className="doc-menu-item" href={documentUrl(job.id, kind, true)} onClick={closeMenu}>
             Download
           </a>
