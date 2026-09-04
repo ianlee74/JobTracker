@@ -93,6 +93,16 @@ await check('user cannot see other job -> 404', 404, status(`/api/jobs/${default
 await check('user can set status on own job', 200, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Interested' }), ...H(aliceCookie) }));
 await check('user can set user_note', 'my note', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ user_note: 'my note' }), ...H(aliceCookie) }).then(j => j.user_note));
 await check('user cannot edit admin note -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ note: 'hijack' }), ...H(aliceCookie) }));
+
+// --- missing skills (only kept with Not Moving Forward + Not Qualified) ---
+await check('user can record missing skills (normalized)', 'Go, Kubernetes', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Not Moving Forward', rejection_reason: 'Not Qualified', missing_skills: ' Go ,Kubernetes,, go ' }), ...H(aliceCookie) }).then(j => j.missing_skills));
+await check('missing skills ignored without Not Qualified', '', jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Not Moving Forward', rejection_reason: 'Low Salary', missing_skills: 'Rust' }), ...H(adminCookie) }).then(j => j.missing_skills));
+await check('admin sees every person\'s skills', ['Go', 'Kubernetes'], jsonBody('/api/missing-skills', H(adminCookie)));
+await db.addJobs([{ title: 'Platform Eng', company: 'Initech', url: 'https://initech.example/9', person_id: defaultPerson.id, status: 'Not Moving Forward', rejection_reason: 'Not Qualified', missing_skills: 'Terraform, go' }]);
+await check('skills list deduped case-insensitively across jobs', ['Go', 'Kubernetes', 'Terraform'], jsonBody('/api/missing-skills', H(adminCookie)));
+await check('user only sees own person\'s skills', ['Go', 'Kubernetes'], jsonBody('/api/missing-skills', H(aliceCookie)));
+await check('changing the reason clears the skills', '', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ rejection_reason: 'Not Interested' }), ...H(aliceCookie) }).then(j => j.missing_skills));
+await check('skills search hits the job', 1, jsonBody('/api/jobs?q=terraform', H(adminCookie)).then(j => j.length));
 await check('user cannot edit title -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'x' }), ...H(aliceCookie) }));
 await check('user cannot delete job -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'DELETE', ...H(aliceCookie) }));
 await check('user cannot patch other job -> 404', 404, status(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Interested' }), ...H(aliceCookie) }));

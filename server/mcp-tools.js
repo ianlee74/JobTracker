@@ -46,7 +46,8 @@ const jobInput = {
   level: z.string().optional().describe(`Seniority level, ideally one of: ${LEVELS.join(', ')}. If omitted it is classified automatically from the job title.`),
   status: statusEnum.optional().describe('Initial status (defaults to "new")'),
   note: z.string().optional().describe('Free-form note'),
-  rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" (only stored with that status). Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else.`)
+  rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" (only stored with that status). Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else.`),
+  missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only stored when rejection_reason is "Not Qualified".')
 };
 
 function ok(data) {
@@ -140,6 +141,7 @@ server.registerTool('update_job', {
     person: z.string().optional().describe('Disambiguates a URL lookup when several people track the same URL — the person\'s name (or numeric id)'),
     status: statusEnum.optional(),
     rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" — set it when setting that status. Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else. Cleared automatically if the status changes to anything else.`),
+    missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only kept while rejection_reason is "Not Qualified"; cleared automatically otherwise.'),
     note: z.string().optional().describe('Replaces the existing note'),
     append_note: z.string().optional().describe('Appended to the existing note on a new line instead of replacing it'),
     title: z.string().optional(),

@@ -31,6 +31,7 @@ export const fetchJobs = (personId) =>
   request('/api/jobs' + (personId ? `?person=${personId}` : ''));
 export const fetchStats = (personId) =>
   request('/api/stats' + (personId ? `?person=${personId}` : ''));
+export const fetchMissingSkills = () => request('/api/missing-skills');
 export const fetchPeople = () => request('/api/people');
 export const addPerson = (name) =>
   request('/api/people', { method: 'POST', body: JSON.stringify({ name }) });

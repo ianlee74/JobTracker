@@ -2,6 +2,21 @@ export const STATUSES = ['new', 'Interested', 'Applied', 'Interviewing', 'Offer'
 
 export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Qualified', 'Low Salary', 'Missing Benefits', 'Not Remote', 'Not Interested in Location', 'Not Interested in Company', 'Other'];
 
+// Missing skills for a "Not Qualified" rejection are stored comma-delimited;
+// parse trims, drops blanks and dedupes case-insensitively (first casing wins).
+export function parseSkills(text) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(text || '').split(',')) {
+    const skill = raw.trim();
+    const key = skill.toLowerCase();
+    if (!skill || seen.has(key)) continue;
+    seen.add(key);
+    out.push(skill);
+  }
+  return out;
+}
+
 export const LEVELS = ['Senior', 'Staff', 'Principal', 'Lead', 'Manager', 'Senior Manager', 'Director', 'Senior Director', 'VP', 'Executive', 'Other'];
 
 export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'Enterprise', 'Agency / Consultancy', 'Non-profit', 'Government', 'Other'];

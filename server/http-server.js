@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { handleRespond } from './respond.js';
@@ -173,6 +173,12 @@ async function handleApi(req, res, url, user) {
       since: p.get('since') || undefined,
       limit: p.get('limit') ? Number(p.get('limit')) : undefined
     }));
+  }
+
+  // Every skill previously recorded as missing on a "Not Qualified" job, for
+  // the UI's suggestion list. Non-admins only see their own person's.
+  if (req.method === 'GET' && url.pathname === '/api/missing-skills') {
+    return json(res, 200, listMissingSkills({ personId: isAdmin ? undefined : user.person_id }));
   }
 
   // Stores a file dragged onto the UI (raw body, filename in the query) and

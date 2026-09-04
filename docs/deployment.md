@@ -108,7 +108,7 @@ person whose jobs they should see.
 | Capability | Admin | User |
 |---|---|---|
 | View / add jobs | all people | own person only |
-| Edit jobs | all fields | `status`, rejection reason, own note |
+| Edit jobs | all fields | `status`, rejection reason, missing skills, own note |
 | Notes | edits admin note, sees user note | edits own note, sees admin note read-only |
 | Companies | full edit | view + favorite ★ |
 | Documents | generate + view all | generate + view own |

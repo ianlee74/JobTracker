@@ -88,7 +88,7 @@ Key properties:
 
 ### Why domain logic lives in db.js
 
-`db.js` is not just a data-access layer — status validation, seniority-level classification, salary parsing, the "clear rejection_reason when leaving Not Moving Forward" rule, per-person URL dedup, and user/session management all live there. This was deliberate: **there are multiple independent entry points (HTTP, stdio MCP, remote MCP, respond pages), and any rule implemented in a route handler would exist in one and not the others.** Pushing every rule down into the shared module means all front doors get identical behavior for free, and the route/tool layers stay thin adapters (parse input → check role → call function → serialize output).
+`db.js` is not just a data-access layer — status validation, seniority-level classification, salary parsing, the "clear rejection_reason when leaving Not Moving Forward" rule (and its sibling for `missing_skills`, which only survives a `Not Qualified` reason), per-person URL dedup, and user/session management all live there. This was deliberate: **there are multiple independent entry points (HTTP, stdio MCP, remote MCP, respond pages), and any rule implemented in a route handler would exist in one and not the others.** Pushing every rule down into the shared module means all front doors get identical behavior for free, and the route/tool layers stay thin adapters (parse input → check role → call function → serialize output).
 
 ## Technology choices and rationale
 
@@ -141,7 +141,7 @@ flowchart LR
 - **Google Identity Services ID tokens, verified in-process.** The web UI gets a signed JWT from Google's sign-in button; the server verifies its signature against Google's published JWKS using `node:crypto` — no OAuth redirect flow, no client secret, and **no new dependencies** ([auth.js](server/auth.js)). The public client id doubles as the `aud`-claim gate on which tokens are accepted.
 - **Invite-only, with a lockout escape hatch.** A successful Google sign-in only works if the email already exists in the `users` table (invited by an admin) — except emails in `JOBTRACKER_ADMIN_EMAILS`, which self-provision as admins on first sign-in, so a fresh deployment is never locked out.
 - **Sessions are SQLite-backed HttpOnly cookies** (30-day expiry, opportunistic cleanup on creation) rather than signed stateless tokens — revocation is a row delete, and the database is already right there.
-- **Two roles, enforced per-route, scoped by data ownership.** A `user` account is linked to one person and is hard-scoped to that person's world: their own jobs (whatever filters they request), a restricted field set on edits (`status`, `rejection_reason`, `user_note` — the admin's `note` stays read-only to them), favorites-only on companies, and their own documents. Admin-only surfaces: filesystem endpoints (browse/upload), people/settings/user management, the email digest, and job deletion. Two details worth noting:
+- **Two roles, enforced per-route, scoped by data ownership.** A `user` account is linked to one person and is hard-scoped to that person's world: their own jobs (whatever filters they request), a restricted field set on edits (`status`, `rejection_reason`, `missing_skills`, `user_note` — the admin's `note` stays read-only to them), favorites-only on companies, and their own documents. Admin-only surfaces: filesystem endpoints (browse/upload), people/settings/user management, the email digest, and job deletion. Two details worth noting:
   - Ownership misses return **404, not 403**, so one user's job/document ids aren't confirmed to exist to another.
   - Admins cannot demote or delete their own signed-in account — the deployment can't be locked out by a misclick.
 - **`user_note` exists because of roles:** the original `note` column became the admin's; candidates got their own column rather than a shared free-for-all field, so neither side can clobber the other.
@@ -186,6 +186,7 @@ erDiagram
         int salary_min "parsed annual USD"
         int salary_max "parsed annual USD"
         text rejection_reason "only with Not Moving Forward"
+        text missing_skills "comma-delimited; only with Not Qualified"
         text note "admin's note"
         text user_note "candidate's note"
         text feedback_token "unguessable; digest email links"

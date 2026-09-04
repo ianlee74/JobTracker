@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
-import { STATUSES, STATUS_COLORS, LEVELS } from './constants.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
+import { STATUSES, STATUS_COLORS, LEVELS, parseSkills } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
@@ -263,6 +263,8 @@ export default function App() {
   // filter would hide them, until a rejection reason has been chosen (and the
   // custom text entered when "Other" is picked).
   const [pinnedIds, setPinnedIds] = useState(new Set());
+  // Every skill ever recorded as missing, for the "Not Qualified" suggestions.
+  const [knownSkills, setKnownSkills] = useState([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -275,10 +277,11 @@ export default function App() {
         pid = peopleData[0]?.id ?? null;
         setPersonId(pid);
       }
-      const [jobsData, statsData, companiesData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies()]);
+      const [jobsData, statsData, companiesData, skillsData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies(), fetchMissingSkills()]);
       setJobs(jobsData);
       setStats(statsData);
       setCompanies(companiesData);
+      setKnownSkills(skillsData);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -307,6 +310,14 @@ export default function App() {
       );
     } catch { /* storage full or blocked — the view just won't persist */ }
   }, [statusFilters, levelFilter, textFilter, dateFilter, customDate, showNotInterested, sort]);
+
+  // Suggestions for the missing-skills prompt: the server's list plus anything
+  // entered since the last refresh (inline edits only update the local job).
+  const skillOptions = useMemo(() => {
+    const local = jobs.map(j => j.missing_skills || '').filter(Boolean).join(',');
+    return parseSkills([...knownSkills, local].join(','))
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [knownSkills, jobs]);
 
   const flashSaved = () => {
     setSavedFlash(true);
@@ -511,7 +522,7 @@ export default function App() {
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
-      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason]
+      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason, job.missing_skills]
         .some(v => (v || '').toLowerCase().includes(text));
     });
 
@@ -591,7 +602,7 @@ export default function App() {
               ✉ Email Interested
             </button>
           )}
-          {!activeCompany && <AddJobForm jobs={jobs} onAdd={handleAdd} />}
+          {!activeCompany && <AddJobForm jobs={jobs} knownSkills={skillOptions} onAdd={handleAdd} />}
           {isAdmin && user.auth_enabled && (
             <button className="clear-btn settings-btn" onClick={() => setUsersOpen(true)} title="Manage users">👥</button>
           )}
@@ -700,6 +711,7 @@ export default function App() {
         jobs={visibleJobs}
         sort={sort}
         onSort={handleSort}
+        knownSkills={skillOptions}
         onUpdate={handleUpdate}
         onReasonDone={unpinJob}
         onDelete={handleDelete}
@@ -743,6 +755,7 @@ export default function App() {
           <JobForm
             jobs={jobs}
             job={editingJob}
+            knownSkills={skillOptions}
             title={`Edit: ${editingJob.title}`}
             submitLabel="Save changes"
             onSubmit={handleEditSave}

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, jobHref } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, jobHref, parseSkills } from './constants.js';
 import { documentUrl } from './api.js';
+import SkillsPicker from './SkillsPicker.jsx';
 
 // Autosaving textarea bound to one of a job's note fields: `note` (the
 // admin's) or `user_note` (the candidate's own).
@@ -58,11 +59,63 @@ function ReadOnlyNote({ text }) {
     : <div className="note-readonly note-empty">—</div>;
 }
 
+// Autosaving, comma-delimited list of the skills a "Not Qualified" job wanted
+// that the candidate lacks; previously entered skills can be ticked from a
+// multi-select menu. Typed text saves after a pause, picks save at once.
+function MissingSkillsInput({ job, knownSkills, onUpdate, onDone }) {
+  const stored = job.missing_skills || '';
+  const [text, setText] = useState(stored);
+  const timer = useRef(null);
+  const latest = useRef(stored);
+  const editing = useRef(false); // true between the first change and the commit
+
+  // Sync external changes (edit modal, MCP refresh) — but never mid-edit, so
+  // in-flight keystrokes aren't clobbered.
+  useEffect(() => {
+    if (!editing.current) {
+      setText(stored);
+      latest.current = stored;
+    }
+  }, [job.id, stored]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const save = (value) => {
+    const skills = parseSkills(value).join(', ');
+    if (skills !== (job.missing_skills || '')) onUpdate(job.id, { missing_skills: skills });
+  };
+
+  return (
+    <SkillsPicker
+      value={text}
+      knownSkills={knownSkills}
+      inputClassName="reason-input"
+      placeholder="Missing skills, comma separated"
+      title="Skills this job asked for that you don't have (comma separated)"
+      onChange={(value, source) => {
+        editing.current = true;
+        setText(value);
+        latest.current = value;
+        clearTimeout(timer.current);
+        if (source === 'pick') save(value);
+        else timer.current = setTimeout(() => save(value), 800);
+      }}
+      onCommit={() => {
+        clearTimeout(timer.current);
+        save(latest.current);
+        editing.current = false;
+        onDone(job.id);
+      }}
+    />
+  );
+}
+
 // Reason for "Not Moving Forward". Custom text is stored directly in
 // rejection_reason; the select shows it as "Other" with the text box filled in.
-// onDone fires once a reason is fully chosen (preset picked, or custom text
-// committed) so a filtered view can stop holding the row on screen.
-function RejectionReason({ job, onUpdate, onDone }) {
+// "Not Qualified" adds a third prompt for the missing skills. onDone fires
+// once a reason is fully chosen (preset picked, or the custom text / missing
+// skills committed) so a filtered view can stop holding the row on screen.
+function RejectionReason({ job, knownSkills, onUpdate, onDone }) {
   const stored = job.rejection_reason || '';
   const isPreset = stored !== 'Other' && REJECTION_REASONS.includes(stored);
   const selectValue = !stored ? '' : isPreset ? stored : 'Other';
@@ -99,7 +152,7 @@ function RejectionReason({ job, onUpdate, onDone }) {
           setText('');
           const value = e.target.value;
           onUpdate(job.id, { rejection_reason: value });
-          if (value && value !== 'Other') onDone(job.id);
+          if (value && value !== 'Other' && value !== 'Not Qualified') onDone(job.id);
         }}
         title="Why you're not moving forward"
       >
@@ -119,6 +172,9 @@ function RejectionReason({ job, onUpdate, onDone }) {
             if (text.trim()) onDone(job.id);
           }}
         />
+      )}
+      {selectValue === 'Not Qualified' && (
+        <MissingSkillsInput job={job} knownSkills={knownSkills} onUpdate={onUpdate} onDone={onDone} />
       )}
     </div>
   );
@@ -256,7 +312,7 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, knownSkills, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
@@ -309,7 +365,7 @@ function JobRow({ job, wide, isAdmin, onUpdate, onReasonDone, onDelete, onEdit, 
         >
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        {job.status === 'Not Moving Forward' && <RejectionReason job={job} onUpdate={onUpdate} onDone={onReasonDone} />}
+        {job.status === 'Not Moving Forward' && <RejectionReason job={job} knownSkills={knownSkills} onUpdate={onUpdate} onDone={onReasonDone} />}
       </td>
       {!wide && (
         <td>
@@ -397,7 +453,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
+export default function JobTable({ jobs, sort, onSort, knownSkills = [], onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -425,6 +481,7 @@ export default function JobTable({ jobs, sort, onSort, onUpdate, onReasonDone, o
               job={job}
               wide={wide}
               isAdmin={isAdmin}
+              knownSkills={knownSkills}
               onUpdate={onUpdate}
               onReasonDone={onReasonDone}
               onDelete={onDelete}

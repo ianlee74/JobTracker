@@ -58,7 +58,7 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 | `add_jobs` | Add new opportunities for one person (bulk); URLs that person already tracks are skipped |
 | `list_jobs` | List/filter by person, status, company, text search, or date |
 | `get_job` | Fetch one job by id or URL |
-| `update_job` | Change status, notes (replace or append), salary, etc. |
+| `update_job` | Change status, rejection reason / missing skills, notes (replace or append), salary, etc. |
 | `delete_job` | Remove an entry (prefer status "Not Moving Forward") |
 | `get_summary` | Counts by status + latest find date (optionally per person) |
 | `list_companies` | Every company with tracked jobs or saved info, incl. favorite / not-interested flags |
@@ -73,6 +73,8 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 Tools that need a person (`add_jobs`, `configure_document_generation`, …) take a `person` argument — the person's name. It can be omitted while only one person is tracked. Job posting URLs are unique **per person**, so two people can track the same posting independently; URL-based lookups accept `person` to disambiguate.
 
 Statuses: `new`, `Interested`, `Applied`, `Interviewing`, `Offer`, `Not Moving Forward`, `No Longer Available`.
+
+`Not Moving Forward` takes a **rejection reason** (`Not Interested`, `Not Qualified`, `Over Qualified`, `Low Salary`, `Missing Benefits`, `Not Remote`, `Not Interested in Location`, `Not Interested in Company`, or free text). A `Not Qualified` reason adds a third prompt for the **missing skills** — a comma-delimited list of what the posting wanted that the candidate lacks (`missing_skills`; e.g. `Kubernetes, Go`). The UI suggests every skill previously entered, and the list is cleared automatically if the status or reason changes to anything else.
 
 Every job also has a seniority **level** used for grouping and filtering: `Senior`, `Staff`, `Principal`, `Lead`, `Manager`, `Senior Manager`, `Director`, `Senior Director`, `VP`, `Executive`, or `Other`. `add_jobs` accepts an optional `level`; when omitted, the level is classified automatically from the job title (e.g. "Sr. Engineering Manager, Platform" → `Senior Manager`). Misclassifications can be corrected inline in the UI's Level column or via `update_job`.
 
