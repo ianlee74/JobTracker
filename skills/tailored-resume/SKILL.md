@@ -25,7 +25,7 @@ Write a complete resume for the candidate, tailored to the specific job describe
 4. Professional experience, most recent first. Rewrite bullets to emphasize what matters for this job; trim roles or bullets with little relevance.
 5. Education and certifications.
 
-Keep the overall length at or below the standard resume's length.
+Resume should be no longer than 2 pages. Remove less relevant experience or details to fit this constraint. Prioritize content that directly supports the target role. Prioritize more recent experience over older experience.
 
 ## Output
 
