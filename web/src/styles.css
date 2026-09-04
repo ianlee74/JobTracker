@@ -916,3 +916,56 @@ tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
 .invite-row input[type="email"] { flex: 1; min-width: 200px; }
 
 .company-fields-readonly { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+
+/* Missing-skills field: text box + ▾ opening a multi-select of past skills. */
+.skills-picker { display: flex; align-items: stretch; gap: 4px; min-width: 0; }
+.skills-picker > input { flex: 1; min-width: 0; }
+.skills-picker-btn {
+  flex-shrink: 0;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.skills-picker-btn:hover, .skills-picker-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+
+.skills-menu {
+  /* Portaled to <body> at fixed viewport coordinates (set inline) so it sits
+     above the edit modal and outside the table wrapper's scroll clipping. */
+  position: fixed;
+  z-index: 70;
+  min-width: 200px;
+  max-width: 320px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+.skills-menu-filter {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+.skills-menu-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; }
+.skills-menu .multi-select-option { font-size: 12px; }
+.skills-menu .multi-select-option input { margin: 0; }
+.skills-menu-add {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  text-align: left;
+}
+.skills-menu-empty { padding: 6px 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }

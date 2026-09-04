@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { STATUSES, LEVELS, REJECTION_REASONS } from './constants.js';
+import { STATUSES, LEVELS, REJECTION_REASONS, parseSkills } from './constants.js';
 import { uploadPosting } from './api.js';
 import FilePicker from './FilePicker.jsx';
+import SkillsPicker from './SkillsPicker.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -31,6 +32,7 @@ const EMPTY = {
   status: 'new',
   rejection_reason: '',
   rejection_other: '',
+  missing_skills: '',
   note: ''
 };
 
@@ -52,13 +54,14 @@ function formFromJob(job) {
     status: job.status,
     rejection_reason: !stored ? '' : isPreset ? stored : 'Other',
     rejection_other: stored && !isPreset ? stored : '',
+    missing_skills: job.missing_skills || '',
     note: job.note || ''
   };
 }
 
 // Shared add/edit form. In edit mode (`job` given) submit sends only the
 // changed fields, so untouched values can't clobber concurrent MCP updates.
-export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
+export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => (job ? formFromJob(job) : { ...EMPTY, date_found: today() }));
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -103,6 +106,10 @@ export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
           form.status !== 'Not Moving Forward' ? ''
           : form.rejection_reason === 'Other' ? (form.rejection_other.trim() || 'Other')
           : form.rejection_reason,
+        missing_skills:
+          form.status === 'Not Moving Forward' && form.rejection_reason === 'Not Qualified'
+            ? parseSkills(form.missing_skills).join(', ')
+            : '',
         // An empty level lets the server auto-classify (add) / keep it (edit).
         ...(form.level ? { level: form.level } : {})
       };
@@ -244,6 +251,17 @@ export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
             <input value={form.rejection_other} onChange={set('rejection_other')} placeholder="Enter a reason..." />
           </label>
         )}
+        {form.status === 'Not Moving Forward' && form.rejection_reason === 'Not Qualified' && (
+          <label className="span-2">
+            Missing skills
+            <SkillsPicker
+              value={form.missing_skills}
+              knownSkills={knownSkills}
+              placeholder="Comma separated, e.g. Kubernetes, Go"
+              onChange={value => setForm(prev => ({ ...prev, missing_skills: value }))}
+            />
+          </label>
+        )}
         <label className="span-2">
           Why it fits
           <input value={form.fit} onChange={set('fit')} placeholder="Optional — why this role is a match" />
@@ -275,7 +293,7 @@ export function JobForm({ jobs, job, title, submitLabel, onSubmit, onClose }) {
   );
 }
 
-export default function AddJobForm({ jobs, onAdd }) {
+export default function AddJobForm({ jobs, knownSkills, onAdd }) {
   const [open, setOpen] = useState(false);
 
   if (!open) {
@@ -288,6 +306,7 @@ export default function AddJobForm({ jobs, onAdd }) {
   return (
     <JobForm
       jobs={jobs}
+      knownSkills={knownSkills}
       title="Add a job"
       submitLabel="Add job"
       onSubmit={onAdd}

@@ -14,6 +14,26 @@ export const STATUSES = ['new', 'Interested', 'Applied', 'Interviewing', 'Offer'
 // allowed (the UI files it under "Other").
 export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Qualified', 'Low Salary', 'Missing Benefits', 'Not Remote', 'Not Interested in Location', 'Not Interested in Company', 'Other'];
 
+// Skills a "Not Qualified" job asked for that the candidate lacks. Stored as a
+// comma-delimited string; these helpers keep it tidy (trimmed, deduped
+// case-insensitively, joined with ", ") so the UI's suggestion list stays clean.
+export function parseSkills(text) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(text || '').split(',')) {
+    const skill = raw.trim();
+    const key = skill.toLowerCase();
+    if (!skill || seen.has(key)) continue;
+    seen.add(key);
+    out.push(skill);
+  }
+  return out;
+}
+
+export function normalizeSkills(text) {
+  return parseSkills(text).join(', ');
+}
+
 export const LEVELS = ['Senior', 'Staff', 'Principal', 'Lead', 'Manager', 'Senior Manager', 'Director', 'Senior Director', 'VP', 'Executive', 'Other'];
 
 export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'Enterprise', 'Agency / Consultancy', 'Non-profit', 'Government', 'Other'];
@@ -320,6 +340,16 @@ if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_person_url ON jobs(person_id, url)');
 }
 
+// Migration: add the missing_skills column (what a "Not Qualified" job wanted
+// that the candidate lacks). Runs after the person_id rebuild so a legacy
+// single-person table isn't rebuilt with a column it doesn't yet know about.
+{
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!cols.includes('missing_skills')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN missing_skills TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 function touch(fields) {
   return { ...fields, updated_at: new Date().toISOString() };
 }
@@ -419,9 +449,9 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
   if (level) { where.push('level = ?'); params.push(level); }
   if (since) { where.push('date_found >= ?'); params.push(since); }
   if (q) {
-    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ?)');
+    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ? OR missing_skills LIKE ?)');
     const like = `%${q}%`;
-    params.push(like, like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like, like);
   }
   // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
   // so callers know what exists without a second query. person_name saves a
@@ -474,8 +504,8 @@ export function isUrlTracked(url) {
 // Each job may carry its own person_id; defaultPersonId covers the rest.
 export function addJobs(jobs, defaultPersonId) {
   const insert = db.prepare(`
-    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(person_id, url) DO NOTHING
   `);
   const results = { added: 0, skipped: 0, jobs: [] };
@@ -485,6 +515,7 @@ export function addJobs(jobs, defaultPersonId) {
       throw new Error(`Unknown person id "${personId}" — every job needs a valid person`);
     }
     const status = STATUSES.includes(job.status) ? job.status : 'new';
+    const reason = status === 'Not Moving Forward' ? (job.rejection_reason || '') : '';
     const level = job.level ? normalizeLevel(job.level) : classifyLevel(job.title);
     // An explicitly supplied range wins; otherwise parse it from the salary string.
     const range = job.salary_min != null || job.salary_max != null
@@ -505,7 +536,8 @@ export function addJobs(jobs, defaultPersonId) {
       status,
       job.note || '',
       level,
-      status === 'Not Moving Forward' ? (job.rejection_reason || '') : ''
+      reason,
+      reason === 'Not Qualified' ? normalizeSkills(job.missing_skills) : ''
     );
     if (info.changes > 0) {
       results.added++;
@@ -517,10 +549,10 @@ export function addJobs(jobs, defaultPersonId) {
   return results;
 }
 
-const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason'];
+const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason', 'missing_skills'];
 
 // The subset of job fields a non-admin user may change on their own jobs.
-export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'user_note'];
+export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'missing_skills', 'user_note'];
 
 export function updateJob({ id, url, personId }, fields) {
   const job = getJob({ id, url, personId });
@@ -543,11 +575,29 @@ export function updateJob({ id, url, personId }, fields) {
   if (fields.status && fields.status !== 'Not Moving Forward') {
     fields = { ...fields, rejection_reason: '' };
   }
+  // Missing skills only make sense for a "Not Qualified" rejection; clear them
+  // whenever the job's (resulting) status/reason is anything else.
+  const reason = 'rejection_reason' in fields ? fields.rejection_reason : job.rejection_reason;
+  if ((fields.status || job.status) !== 'Not Moving Forward' || reason !== 'Not Qualified') {
+    fields = { ...fields, missing_skills: '' };
+  } else if ('missing_skills' in fields) {
+    fields = { ...fields, missing_skills: normalizeSkills(fields.missing_skills) };
+  }
   const updates = Object.entries(touch(fields)).filter(([k]) => EDITABLE_FIELDS.includes(k) || k === 'updated_at');
   if (!updates.length) return job;
   const sql = `UPDATE jobs SET ${updates.map(([k]) => `${k} = ?`).join(', ')} WHERE id = ?`;
   db.prepare(sql).run(...updates.map(([, v]) => v), job.id);
   return getJob({ id: job.id });
+}
+
+// Every distinct skill ever recorded as missing (optionally for one person),
+// comma-parsed and deduped case-insensitively, for the UI's suggestion list.
+export function listMissingSkills({ personId } = {}) {
+  const rows = personId != null
+    ? db.prepare("SELECT missing_skills FROM jobs WHERE missing_skills != '' AND person_id = ?").all(personId)
+    : db.prepare("SELECT missing_skills FROM jobs WHERE missing_skills != ''").all();
+  return parseSkills(rows.map(r => r.missing_skills).join(','))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
 export function deleteJob({ id, url, personId }) {
