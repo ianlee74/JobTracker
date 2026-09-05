@@ -2,11 +2,13 @@
 name: tailored-resume
 description: Write a resume tailored to one specific job posting, grounded in the candidate's standard resume. Used by JobTracker's document generator; edit this file to change how tailored resumes are written.
 model: claude-opus-5
+template: templates/resume.docx
+max_words: 850
 ---
 
 # Tailored Resume
 
-Write a complete resume for the candidate, tailored to the specific job described in the conversation. The candidate's standard resume is the single source of truth for facts.
+Write a complete resume for the candidate, tailored to the specific job described in the conversation. The candidate's standard resume is the single source of truth for facts; the formatting template (shown in the output-format instructions) is the single source of truth for layout and style — the standard resume's own formatting is irrelevant and is not available to you.
 
 ## Rules
 
@@ -19,14 +21,25 @@ Write a complete resume for the candidate, tailored to the specific job describe
 
 ## Structure
 
-1. Name and contact details.
-2. A 2–4 line professional summary written for this specific role.
-3. Skills, with the most relevant ones first.
-4. Professional experience, most recent first. Rewrite bullets to emphasize what matters for this job; trim roles or bullets with little relevance.
-5. Education and certifications.
+Follow the template's skeleton, using its styles for each part:
 
-Resume should be no longer than 2 pages. Remove less relevant experience or details to fit this constraint. Prioritize content that directly supports the target role. Prioritize more recent experience over older experience.
+1. **Header** — the candidate's name (`Name`), a one-line headline naming the target title and one secondary title that the candidate genuinely fits (`Headline`), and one contact line (`Contact`).
+2. **PROFESSIONAL SUMMARY** — one paragraph of 2–4 lines written for this specific role (`Body`).
+3. **CORE SKILLS** — 3–5 `SkillLine` paragraphs, each a bold group label (`Label` run) followed by a comma-separated list; the most relevant group first.
+4. **PROFESSIONAL EXPERIENCE** — the most relevant recent roles in detail, most recent first. Each role is a `RoleHeader` (company, then location right-aligned with a `Muted` run), a `RoleTitle` (title, then dates right-aligned with a `Dates` run), an optional `Technologies` line, and `Bullet` paragraphs. Rewrite bullets to emphasize what matters for this job.
+5. **EARLIER CAREER** — older or less relevant roles compressed to one `EarlierRole` line each (company, ` — Title` as a `Subtitle` run, dates as a `Dates` run) with at most one `EarlierDetail` line. Omit the section if everything fits in detail.
+6. **EDUCATION & CERTIFICATIONS** — one `Entry` per degree, certification, or award.
+
+Section headings use the `SectionHeading` style with the capitalized titles above.
+
+## Length
+
+The resume must fit on two pages. The exact word budget is stated in the appended length instructions and is enforced mechanically after generation — a document over budget is rejected and rewritten, so treat the budget as a hard constraint and plan the content to fit it before writing:
+
+- Detail at most four or five roles; give the two most recent and relevant roles 4–6 bullets and the rest 2–3.
+- Move everything older or less relevant to EARLIER CAREER as one-liners, or drop it.
+- Prefer one strong, specific bullet over two weak ones. Prefer more recent experience over older experience when both make the same point.
 
 ## Output
 
-Output only the resume document itself — no preamble, no commentary. The exact file format (Markdown, or Word XML mirroring the standard resume's own formatting) is specified in instructions appended at generation time.
+Output only the resume document itself — no preamble, no commentary — as Word XML written against the template, exactly as specified in the output-format instructions appended at generation time.
