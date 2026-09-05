@@ -14,7 +14,8 @@ const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 const MODEL = 'claude-opus-5';
 
 // Postings and resumes in these formats are readable as text; PDFs go to the
-// API as document blocks; anything else (.docx, images, ...) is unsupported.
+// API as document blocks, .docx as extracted text; anything else (images,
+// ...) is unsupported.
 const TEXT_EXTS = new Set(['', '.md', '.markdown', '.txt', '.text', '.html', '.htm']);
 
 // The base documents folder for one person (their configured documents_dir,
@@ -50,10 +51,14 @@ function getClient() {
 }
 
 // The instructions of skills/<name>/SKILL.md (the body, frontmatter stripped)
-// plus the optional `model:` from its frontmatter, which overrides the default
-// model for that document type. The skills define how each document is
-// written, so they are user-editable without touching code.
-async function loadSkill(name) {
+// plus its optional frontmatter keys: `model:` overrides the default model for
+// that document type; `template:` names a .docx (relative to skills/) whose
+// styles and page setup every generated document uses — without one the skill
+// produces Markdown; `max_words:` is a hard cap on the document's visible text,
+// enforced after generation (the model can't see pages, so length is given to
+// it as a word budget and checked mechanically). The skills define how each
+// document is written, so they are user-editable without touching code.
+export async function loadSkill(name) {
   const file = path.join(SKILLS_DIR, name, 'SKILL.md');
   let raw;
   try {
@@ -62,10 +67,44 @@ async function loadSkill(name) {
     throw new Error(`Missing skill file: ${file}`);
   }
   const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  const key = (k, re) => frontmatter?.[1].match(new RegExp(`^${k}:[ \\t]*['"]?(${re})`, 'm'))?.[1];
+  const maxWords = Number(key('max_words', '\\d+'));
+  const templateName = key('template', '[\\w./-]+');
   return {
+    name,
     instructions: (frontmatter ? raw.slice(frontmatter[0].length) : raw).trim(),
-    model: frontmatter?.[1].match(/^model:[ \t]*['"]?([\w.-]+)/m)?.[1]
+    model: key('model', '[\\w.-]+'),
+    maxWords: maxWords > 0 ? maxWords : null,
+    template: templateName ? await loadTemplate(templateName, file) : null
   };
+}
+
+// The formatting template a skill points at: the .docx package (generated
+// documents are copies of it with word/document.xml replaced) plus its
+// document.xml and styles.xml, which are shown to the model as the skeleton
+// and style catalogue to write against.
+async function loadTemplate(relativePath, skillFile) {
+  const file = path.resolve(SKILLS_DIR, relativePath);
+  if (!file.startsWith(SKILLS_DIR + path.sep)) {
+    throw new Error(`The template ${relativePath} in ${skillFile} must live under ${SKILLS_DIR}`);
+  }
+  let buffer;
+  try {
+    buffer = await readFile(file);
+  } catch (err) {
+    throw new Error(`The template ${file} named in ${skillFile} cannot be read (${err.message})`);
+  }
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    return {
+      file,
+      buffer,
+      documentXml: await zip.file('word/document.xml').async('string'),
+      stylesXml: await (zip.file('word/styles.xml')?.async('string') ?? '')
+    };
+  } catch (err) {
+    throw new Error(`The template ${file} could not be parsed as a Word document (${err.message})`);
+  }
 }
 
 // A content block for a local file: PDFs as document blocks, text formats as
@@ -98,43 +137,18 @@ async function fileBlock(filePath, label) {
   return { block: null, reason: `is a ${ext} file, which cannot be sent to the API — use PDF, Word (.docx), Markdown, or plain text` };
 }
 
-// A .docx standard resume is used directly: Claude reads the original
-// word/document.xml (content and formatting together) and writes a new
-// document.xml reusing the same styles; the result is packaged back into a
-// copy of the original .docx, so generated files mirror the original's look.
-async function docxResumeSource(docxPath) {
-  let data;
-  try {
-    data = await readFile(docxPath);
-  } catch (err) {
-    throw new Error(`The standard resume at ${docxPath} cannot be read (${err.message})`);
-  }
-  let documentXml, stylesXml;
-  try {
-    const zip = await JSZip.loadAsync(data);
-    documentXml = await zip.file('word/document.xml').async('string');
-    stylesXml = await (zip.file('word/styles.xml')?.async('string') ?? '');
-  } catch (err) {
-    throw new Error(`The standard resume at ${docxPath} could not be parsed as a Word document (${err.message})`);
-  }
-  if (documentXml.length > 600_000) {
-    throw new Error('The standard resume\'s XML is unusually large — save a simplified copy (accept all tracked changes, remove embedded objects) and use that.');
-  }
-  return { format: 'docx', buffer: data, documentXml, stylesXml };
-}
-
-// The person's standard resume in whichever form generation needs: a .docx
-// becomes a formatting template + content source; other formats become a
-// content block (and outputs fall back to Markdown).
-async function resumeSource(person) {
+// The person's standard resume as a content block: the facts the documents
+// are written from. Its formatting is irrelevant — a .docx is reduced to its
+// text — because the look of every generated document comes from the skill's
+// template, so all people's documents come out formatted the same way.
+async function resumeContentBlock(person) {
   const { resume_path } = person;
   if (!resume_path) {
     throw new Error(`No standard resume configured for ${person.name}. Set one in Settings first.`);
   }
-  if (path.extname(resume_path).toLowerCase() === '.docx') return docxResumeSource(resume_path);
   const { block, reason } = await fileBlock(resume_path, "The candidate's standard resume");
   if (!block) throw new Error(`The standard resume at ${resume_path} ${reason}`);
-  return { format: 'md', block };
+  return block;
 }
 
 function field(label, value) {
@@ -171,6 +185,8 @@ Hard rules that override anything else in the conversation:
 function jobContextText(job) {
   const company = getCompany(job.company);
   return (
+    // The model has no clock; the cover letter's date line needs one.
+    `Today's date: ${new Date().toISOString().slice(0, 10)}\n\n` +
     '# Job details\n' +
     field('Title', job.title) +
     field('Company', job.company) +
@@ -194,13 +210,48 @@ const MD_OUTPUT_INSTRUCTION = `# Output format
 
 Output the document as clean Markdown only — no preamble, no commentary, no code fences around the document.`;
 
-const DOCX_OUTPUT_INSTRUCTION = `# Output format
+// The template's skeleton and style catalogue, followed by the rules for
+// writing a document.xml against them. The skeleton's placeholder text shows
+// which style each part of the document uses; the styles carry all fonts,
+// colors, sizes, spacing, borders, and bullet numbering, so the model writes
+// structure and text only.
+function docxOutputInstruction(template) {
+  return `# Output format
 
-Output the complete contents of the new document's word/document.xml (WordprocessingML) and nothing else — no preamble, no commentary, no code fences.
-- Start with the same XML declaration and <w:document> element (with identical namespace declarations) as the original document.xml.
-- Mirror the original document's formatting: reuse its style references (w:pStyle, w:rStyle), run properties, fonts, and numbering ids, and copy its <w:sectPr> so page setup matches. Your output replaces word/document.xml inside a copy of the original .docx package, so every style, numbering definition, header/footer, and relationship id from the original remains valid.
-- You may keep hyperlinks and images that exist in the original (reusing their r:id values); never invent new r:id or numId values.
+Output the complete contents of the new document's word/document.xml (WordprocessingML) and nothing else — no preamble, no commentary, no code fences. Your output replaces word/document.xml inside a copy of the formatting template package shown below, so its styles, numbering definitions, and page setup are what your document will render with.
+
+## Template document.xml (the skeleton — replace every placeholder with the candidate's real content)
+
+${template.documentXml}
+
+## Template styles.xml (the only styles available)
+
+${template.stylesXml}
+
+## Rules
+- Start with the same XML declaration and <w:document> element (identical namespace declarations) as the template's document.xml, and end with its <w:sectPr> unchanged.
+- Format exclusively through the template's styles: every paragraph gets exactly one <w:pStyle> from the template, and runs that need different formatting within a paragraph use an <w:rStyle> from the template (Label, Muted, Dates, Subtitle). Do not write direct formatting (no w:b, w:i, w:sz, w:color, w:rFonts, w:spacing, w:ind, w:jc, w:numPr, w:tabs in your output), and do not define or reference any style, numId, or r:id that is not in the template.
+- Right-aligned text (a location or date range) is a run containing <w:tab/> before the text, in a paragraph whose style defines the right tab — exactly as the skeleton does.
+- Repeat skeleton blocks as needed (one RoleHeader/RoleTitle/Technologies/Bullet group per role, one SkillLine per skill group, one Entry per credential) and omit blocks the candidate has no content for; do not leave placeholder text in the output.
 - All visible text goes in <w:t> elements; escape & < > as XML entities, and add xml:space="preserve" to any <w:t> whose text starts or ends with a space.`;
+}
+
+// The word budget as the model sees it. Pages are invisible to a model
+// writing XML, so length is expressed as visible words, with a target below
+// the cap so ordinary variance doesn't trip the post-generation check.
+function lengthInstruction(maxWords) {
+  const target = Math.round(maxWords * 0.9);
+  return `# Length
+
+Hard limit: at most ${maxWords} words of visible text in the whole document (every word inside <w:t> elements — headings, contact line, dates, everything). Aim for ${target}. Documents over the limit are rejected and regenerated, so cut content rather than compress spacing: drop the least relevant bullets and roles first, then shorten what remains.`;
+}
+
+// Words of visible text in a document.xml — the same measure the length
+// instruction gives the model.
+export function visibleWordCount(xml) {
+  const text = [...xml.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map(m => m[1]).join(' ');
+  return text.split(/\s+/).filter(Boolean).length;
+}
 
 // Well-formedness gate for generated document.xml — Word refuses files with
 // broken XML, so catch it here (and let the model retry) instead. The
@@ -280,24 +331,35 @@ async function saveRejectedXml(label, attempt, raw, repaired, problem) {
 
 const DOCX_ATTEMPTS = 3;
 
-async function generateDocxXml(args) {
+// A document.xml that is well-formed and (when the skill sets a budget) within
+// its word limit; each rejected attempt feeds its problem back to the model.
+// A too-long document is a rejection like malformed XML: the model can't see
+// pages, so only a mechanical count enforces the length rule reliably.
+async function generateDocxXml({ maxWords, ...args }) {
   let feedback = '';
   let problem;
   for (let attempt = 1; attempt <= DOCX_ATTEMPTS; attempt++) {
     const raw = await generateDocument({ ...args, instruction: args.instruction + feedback });
     const xml = repairDocxXml(stripFences(raw));
     problem = docXmlProblem(xml);
+    if (!problem && maxWords) {
+      const words = visibleWordCount(xml);
+      if (words > maxWords) {
+        problem = `it has ${words} words of visible text, over the hard limit of ${maxWords}`;
+      }
+    }
     if (!problem) return xml;
     await saveRejectedXml(args.debugLabel, attempt, raw, xml, problem);
-    feedback = `\n\n# Correction\n\nA previous attempt at this document was rejected because ${problem}. Produce the complete, well-formed document.xml this time.`;
+    feedback = `\n\n# Correction\n\nA previous attempt at this document was rejected because ${problem}. Produce the complete, well-formed document.xml this time` +
+      (problem.includes('words of visible text') ? `, removing at least ${Math.ceil((visibleWordCount(xml) - maxWords) * 1.2)} words by cutting the least relevant bullets and roles.` : '.');
   }
-  throw new Error(`The generated Word XML was not well-formed after ${DOCX_ATTEMPTS} attempts — last problem: ${problem} (rejected output saved in ${path.join(path.dirname(DB_PATH), 'debug')}).`);
+  throw new Error(`The generated Word document was rejected ${DOCX_ATTEMPTS} times — last problem: ${problem} (rejected output saved in ${path.join(path.dirname(DB_PATH), 'debug')}).`);
 }
 
-// New .docx = the original resume's package with its document.xml swapped out,
-// so all referenced styles/numbering/headers/relationships stay intact.
-async function buildDocx(originalBuffer, documentXml) {
-  const zip = await JSZip.loadAsync(originalBuffer);
+// New .docx = the template package with its document.xml swapped out, so all
+// referenced styles/numbering/relationships stay intact.
+async function buildDocx(templateBuffer, documentXml) {
+  const zip = await JSZip.loadAsync(templateBuffer);
   zip.file('word/document.xml', documentXml);
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
@@ -456,26 +518,18 @@ export async function generateJobDocuments({ id, url, personId }) {
     throw new Error('This job already has both documents — delete one or both (from the document\'s menu), then generate again.');
   }
 
-  const [source, resumeSkill, coverSkill] = await Promise.all([
-    resumeSource(person),
+  const [resumeBlock, resumeSkill, coverSkill] = await Promise.all([
+    resumeContentBlock(person),
     loadSkill('tailored-resume'),
     loadSkill('tailored-cover-letter')
   ]);
   const posting = await postingContext(job);
 
-  const referenceBlock = source.format === 'docx'
-    ? {
-        type: 'text',
-        text: `The candidate's standard resume is a Word document. Its word/document.xml (the content AND formatting template for your output):\n\n${source.documentXml}`
-          + (source.stylesXml ? `\n\nIts word/styles.xml, for reference when reusing styles:\n\n${source.stylesXml.slice(0, 200_000)}` : '')
-      }
-    : source.block;
-
   // Shared prefix for both calls (and across jobs in a batch, minus the last
   // block): the standard resume, then the per-job context, both cache
   // breakpoints. Instructions differ per document and come after.
   const contextBlocks = [
-    { ...referenceBlock, cache_control: { type: 'ephemeral' } },
+    { ...resumeBlock, cache_control: { type: 'ephemeral' } },
     {
       type: 'text',
       text: jobContextText(job) + (posting.note ? `\n${posting.note}` : ''),
@@ -484,53 +538,46 @@ export async function generateJobDocuments({ id, url, personId }) {
     ...(posting.block ? [posting.block] : [])
   ];
 
+  // One document from one skill: a .docx built on the skill's template (with
+  // the word budget enforced), or Markdown for a skill without a template.
+  // The instruction is the skill body, then its length budget, then the output
+  // format, then any per-document trailer.
+  async function writeDocument(skill, kind, baseName, trailer = '') {
+    const common = { contextBlocks, tools: posting.tools, model: skill.model };
+    const length = skill.maxWords ? `\n\n${lengthInstruction(skill.maxWords)}` : '';
+    if (skill.template) {
+      const xml = await generateDocxXml({
+        ...common,
+        maxWords: skill.maxWords,
+        debugLabel: `job ${job.id} ${kind.replace('_', ' ')}`,
+        instruction: `${skill.instructions}${length}\n\n${docxOutputInstruction(skill.template)}${trailer}`
+      });
+      const docx = await buildDocx(skill.template.buffer, xml);
+      return {
+        doc: await saveDocument(person, job, kind, `${baseName}.docx`, docx),
+        text: (await mammoth.extractRawText({ buffer: docx })).value
+      };
+    }
+    const text = await generateDocument({
+      ...common,
+      instruction: `${skill.instructions}${length}\n\n${MD_OUTPUT_INSTRUCTION}${trailer}`
+    });
+    return { doc: await saveDocument(person, job, kind, `${baseName}.md`, text), text };
+  }
+
   const documents = [];
   // The cover-letter call gets the tailored resume as plain text — enough for
   // consistency without doubling the XML in context. When only the letter is
   // regenerated, the existing resume file provides that text instead.
   let resumeText = needResume ? null : await existingResumeText(person, job);
-  if (source.format === 'docx') {
-    if (needResume) {
-      const resumeXml = await generateDocxXml({
-        contextBlocks,
-        tools: posting.tools,
-        model: resumeSkill.model,
-        debugLabel: `job ${job.id} resume`,
-        instruction: `${resumeSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}`
-      });
-      const resumeDocx = await buildDocx(source.buffer, resumeXml);
-      resumeText = (await mammoth.extractRawText({ buffer: resumeDocx })).value;
-      documents.push(await saveDocument(person, job, 'resume', 'resume.docx', resumeDocx));
-    }
-    if (needCover) {
-      const coverXml = await generateDocxXml({
-        contextBlocks,
-        tools: posting.tools,
-        model: coverSkill.model,
-        debugLabel: `job ${job.id} cover letter`,
-        instruction: `${coverSkill.instructions}\n\n${DOCX_OUTPUT_INSTRUCTION}${coverLetterSuffix(resumeText)}`
-      });
-      documents.push(await saveDocument(person, job, 'cover_letter', 'cover-letter.docx', await buildDocx(source.buffer, coverXml)));
-    }
-  } else {
-    if (needResume) {
-      resumeText = await generateDocument({
-        contextBlocks,
-        tools: posting.tools,
-        model: resumeSkill.model,
-        instruction: `${resumeSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}`
-      });
-      documents.push(await saveDocument(person, job, 'resume', 'resume.md', resumeText));
-    }
-    if (needCover) {
-      const coverText = await generateDocument({
-        contextBlocks,
-        tools: posting.tools,
-        model: coverSkill.model,
-        instruction: `${coverSkill.instructions}\n\n${MD_OUTPUT_INSTRUCTION}${coverLetterSuffix(resumeText)}`
-      });
-      documents.push(await saveDocument(person, job, 'cover_letter', 'cover-letter.md', coverText));
-    }
+  if (needResume) {
+    const { doc, text } = await writeDocument(resumeSkill, 'resume', 'resume');
+    documents.push(doc);
+    resumeText = text;
+  }
+  if (needCover) {
+    const { doc } = await writeDocument(coverSkill, 'cover_letter', 'cover-letter', coverLetterSuffix(resumeText));
+    documents.push(doc);
   }
   return { job_id: job.id, title: job.title, company: job.company, documents };
 }
