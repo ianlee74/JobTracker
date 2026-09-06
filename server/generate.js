@@ -237,13 +237,15 @@ ${template.stylesXml}
 }
 
 // The word budget as the model sees it. Pages are invisible to a model
-// writing XML, so length is expressed as visible words, with a target below
-// the cap so ordinary variance doesn't trip the post-generation check.
+// writing XML, so length is expressed as visible words: a floor so the
+// document fills its pages, and a cap (checked after generation) so it
+// doesn't spill onto another. Models undershoot targets, so the floor sits
+// close to the cap.
 function lengthInstruction(maxWords) {
-  const target = Math.round(maxWords * 0.9);
+  const floor = Math.round(maxWords * 0.93);
   return `# Length
 
-Hard limit: at most ${maxWords} words of visible text in the whole document (every word inside <w:t> elements — headings, contact line, dates, everything). Aim for ${target}. Documents over the limit are rejected and regenerated, so cut content rather than compress spacing: drop the least relevant bullets and roles first, then shorten what remains.`;
+Hard limit: at most ${maxWords} words of visible text in the whole document (every word inside <w:t> elements — headings, contact line, dates, everything). Use the budget: aim for ${floor}–${maxWords} words, since a document well under the floor leaves its last page mostly empty. Documents over the limit are rejected and regenerated, so if you must cut, cut content rather than compress spacing: drop the least relevant bullets and roles first, then shorten what remains.`;
 }
 
 // Words of visible text in a document.xml — the same measure the length
