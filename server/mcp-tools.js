@@ -206,16 +206,17 @@ server.registerTool('update_company', {
 
 server.registerTool('generate_documents', {
   title: 'Generate tailored resume & cover letter',
-  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), using the Anthropic API and the owning person\'s standard resume. Files are written to a per-job folder under that person\'s documents directory. Slow: allow a few minutes per job.',
+  description: 'Generate a resume and cover letter tailored to a specific job (by id or URL), using the Anthropic API and the owning person\'s standard resume. Files are written to a per-job folder under that person\'s documents directory. Slow: allow a few minutes per job. BEFORE calling this tool, ask the user whether they have any special instructions for this application (what to emphasize or leave out, tone, a particular experience to foreground, anything the recruiter said) and pass their answer as `instructions`; call without instructions only once they have said they have none.',
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
     url: z.string().optional().describe('Job posting URL (alternative to id)'),
-    person: z.string().optional().describe('With url: disambiguates which person\'s job. Name (or numeric id).')
+    person: z.string().optional().describe('With url: disambiguates which person\'s job. Name (or numeric id).'),
+    instructions: z.string().optional().describe('The user\'s special instructions for this application, gathered from them before calling. They are folded into the generation prompt as guidance that steers the documents, not copied into them verbatim. Omit when the user says they have none.')
   }
-}, async ({ id, url, person }) => {
+}, async ({ id, url, person, instructions }) => {
   const personId = person ? resolvePerson(person).id : undefined;
   if (id == null && !url) throw new Error('Provide id or url');
-  return ok(await generateJobDocuments({ id, url, personId }));
+  return ok(await generateJobDocuments({ id, url, personId, instructions }));
 });
 
 server.registerTool('generate_interested_email', {

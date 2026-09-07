@@ -70,9 +70,10 @@ export const uploadResumeFile = (personId, file) =>
 export const saveSettings = (personId, fields) =>
   request(`/api/settings?person=${personId}`, { method: 'PATCH', body: JSON.stringify(fields) });
 // Generates the tailored resume + cover letter for one job. Slow (minutes) —
-// two model calls happen server-side before this resolves.
-export const generateDocuments = (id) =>
-  request(`/api/jobs/${id}/generate`, { method: 'POST' });
+// two model calls happen server-side before this resolves. `instructions` is
+// the candidate's optional special guidance for this application.
+export const generateDocuments = (id, instructions = '') =>
+  request(`/api/jobs/${id}/generate`, { method: 'POST', body: JSON.stringify({ instructions }) });
 export const documentUrl = (id, kind, download) =>
   `/api/document?job=${id}&kind=${kind}${download ? '&download=1' : ''}`;
 // Deletes a job's documents (files + DB records) — one kind, or both when

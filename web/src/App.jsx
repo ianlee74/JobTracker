@@ -6,6 +6,7 @@ import AddJobForm, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
 import SettingsDialog from './SettingsDialog.jsx';
 import UsersDialog from './UsersDialog.jsx';
+import GenerateDialog from './GenerateDialog.jsx';
 import { useUser } from './AuthGate.jsx';
 import { syncResumeFromLink } from './resumeLink.js';
 
@@ -259,6 +260,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [usersOpen, setUsersOpen] = useState(false);
   const [generatingIds, setGeneratingIds] = useState(new Set()); // jobs with a generation in flight
+  const [generateFor, setGenerateFor] = useState(null); // job whose special-instructions dialog is open
   // Jobs just set to "Not Moving Forward" stay visible even when the status
   // filter would hide them, until a rejection reason has been chosen (and the
   // custom text entered when "Other" is picked).
@@ -392,11 +394,11 @@ export default function App() {
   };
 
   // Tailored resume + cover letter for one job via the server's Anthropic API
-  // call.
-  const handleGenerate = async (job) => {
+  // call, steered by the candidate's special instructions for it (if any).
+  const handleGenerate = async (job, instructions = '') => {
     setGeneratingIds(prev => new Set(prev).add(job.id));
     try {
-      const result = await generateDocuments(job.id);
+      const result = await generateDocuments(job.id, instructions);
       if (result.documents?.length) {
         // Only missing documents are generated, so merge with what the job
         // already had rather than replacing it.
@@ -459,11 +461,13 @@ export default function App() {
     }
   };
 
-  const handleGenerateOne = async (job) => {
+  // ✨ on a row: first ask for special instructions (GenerateDialog), then
+  // generate once the candidate confirms.
+  const handleGenerateOne = async (job, instructions = '') => {
     setError(null);
     await refreshResume();
     try {
-      await handleGenerate(job);
+      await handleGenerate(job, instructions);
     } catch (err) {
       setError(`${job.title} (${job.company}): ${err.message}`);
     }
@@ -717,7 +721,7 @@ export default function App() {
         onDelete={handleDelete}
         onEdit={setEditingJob}
         onOpenCompany={setActiveCompany}
-        onGenerate={handleGenerateOne}
+        onGenerate={setGenerateFor}
         onUploadDocument={handleUploadDocument}
         onDeleteDocuments={handleDeleteDocuments}
         generatingIds={generatingIds}
@@ -729,6 +733,18 @@ export default function App() {
 
       {usersOpen && (
         <UsersDialog people={people} onClose={() => setUsersOpen(false)} />
+      )}
+
+      {generateFor && (
+        <GenerateDialog
+          job={jobs.find(j => j.id === generateFor.id) || generateFor}
+          onClose={() => setGenerateFor(null)}
+          onGenerate={(instructions) => {
+            const job = generateFor;
+            setGenerateFor(null);
+            handleGenerateOne(job, instructions);
+          }}
+        />
       )}
 
       {settingsOpen && personId != null && (
