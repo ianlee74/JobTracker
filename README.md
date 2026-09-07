@@ -56,7 +56,7 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 | Tool | Purpose |
 |---|---|
 | `add_jobs` | Add new opportunities for one person (bulk); URLs that person already tracks are skipped |
-| `list_jobs` | List/filter by person, status, company, text search, or date |
+| `list_jobs` | List/filter by person, status (one or an array), company, text search, or date |
 | `get_job` | Fetch one job by id or URL |
 | `update_job` | Change status, rejection reason / missing skills, notes (replace or append), salary, etc. |
 | `delete_job` | Remove an entry (prefer status "Not Moving Forward") |
@@ -129,7 +129,7 @@ Already-imported jobs (same URL) are skipped, so re-running is safe.
 
 The web server also exposes the data at `http://localhost:7080/api`:
 
-- `GET /api/jobs` — query params: `person` (id), `status`, `company`, `level`, `q`, `since`, `limit`
+- `GET /api/jobs` — query params: `person` (id), `status` (repeatable or comma-separated for any-of), `company`, `level`, `q`, `since`, `limit`
 - `POST /api/jobs` — body: job object or array (requires `title`, `company`, `url`; each job may carry `person_id`, otherwise `?person=<id>` applies)
 - `GET /api/jobs/:id`, `PATCH /api/jobs/:id`, `DELETE /api/jobs/:id`
 - `GET /api/people`, `POST /api/people`, `GET|PATCH|DELETE /api/people/:id` — the tracked candidates (delete requires the person to have no jobs)

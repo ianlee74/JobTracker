@@ -454,7 +454,9 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
     where.push('company NOT IN (SELECT name FROM companies WHERE not_interested = 1)');
   }
   if (personId != null) { where.push('person_id = ?'); params.push(personId); }
-  if (status) { where.push('status = ?'); params.push(status); }
+  // status accepts one value or an array (any-of match).
+  const statuses = (Array.isArray(status) ? status : [status]).filter(Boolean);
+  if (statuses.length) { where.push(`status IN (${statuses.map(() => '?').join(', ')})`); params.push(...statuses); }
   if (company) { where.push('company LIKE ?'); params.push(`%${company}%`); }
   if (level) { where.push('level = ?'); params.push(level); }
   if (since) { where.push('date_found >= ?'); params.push(since); }
