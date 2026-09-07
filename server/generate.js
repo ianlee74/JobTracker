@@ -492,12 +492,19 @@ async function existingResumeText(person, job) {
   return null;
 }
 
-// The cover-letter instruction's trailer: the tailored resume it should stay
-// consistent with, when one is available as text.
-function coverLetterSuffix(resumeText) {
-  return resumeText
-    ? `\n\n# Tailored resume\n\nThe resume below was written for this application — keep the letter consistent with it:\n\n${resumeText}`
-    : '';
+// The cover-letter instruction's trailer: the name to sign the letter with,
+// when the person has set a preferred one, and the tailored resume it should
+// stay consistent with, when one is available as text.
+function coverLetterSuffix(person, resumeText) {
+  const preferred = (person.preferred_name || '').trim();
+  return (
+    (preferred
+      ? `\n\n# Signature\n\nSign the letter as "${preferred}" — this is the name the candidate goes by. Use it as the sign-off name (after "Sincerely,"), even if the resume gives a fuller or different name.`
+      : '') +
+    (resumeText
+      ? `\n\n# Tailored resume\n\nThe resume below was written for this application — keep the letter consistent with it:\n\n${resumeText}`
+      : '')
+  );
 }
 
 // Generate the tailored documents one job is missing, using the owning
@@ -578,7 +585,7 @@ export async function generateJobDocuments({ id, url, personId }) {
     resumeText = text;
   }
   if (needCover) {
-    const { doc } = await writeDocument(coverSkill, 'cover_letter', 'cover-letter', coverLetterSuffix(resumeText));
+    const { doc } = await writeDocument(coverSkill, 'cover_letter', 'cover-letter', coverLetterSuffix(person, resumeText));
     documents.push(doc);
   }
   return { job_id: job.id, title: job.title, company: job.company, documents };
