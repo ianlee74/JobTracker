@@ -32,6 +32,7 @@ const SYNC_MESSAGES = {
 export default function SettingsDialog({ personId, personName, onClose, onSaved }) {
   const [settings, setSettings] = useState(null);
   const [name, setName] = useState(personName || '');
+  const [preferredName, setPreferredName] = useState('');
   const [email, setEmail] = useState('');
   const [searchInstructions, setSearchInstructions] = useState('');
   const [resumePath, setResumePath] = useState('');
@@ -47,6 +48,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
       .then(s => {
         setSettings(s);
         setName(s.person_name);
+        setPreferredName(s.preferred_name || '');
         setEmail(s.email || '');
         setSearchInstructions(s.search_instructions || '');
         setResumePath(s.resume_path);
@@ -135,7 +137,7 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
     setError(null);
     try {
       const path = cleanPath(resumePath);
-      await saveSettings(personId, { name, email: email.trim(), search_instructions: searchInstructions, resume_path: path, documents_dir: cleanPath(documentsDir) });
+      await saveSettings(personId, { name, preferred_name: preferredName.trim(), email: email.trim(), search_instructions: searchInstructions, resume_path: path, documents_dir: cleanPath(documentsDir) });
       // A manually entered path replaces the managed snapshot — the stored
       // handle no longer describes what generation reads, so drop it.
       if (link && path !== link.managedPath) {
@@ -180,6 +182,17 @@ export default function SettingsDialog({ personId, personName, onClose, onSaved 
               />
               <span className="settings-hint">
                 The resume and documents folder below apply only to this person; every person has their own.
+              </span>
+            </label>
+            <label className="span-2">
+              Preferred name
+              <input
+                value={preferredName}
+                onChange={e => setPreferredName(e.target.value)}
+                placeholder="How this person signs their cover letters, e.g. Ian Lee"
+              />
+              <span className="settings-hint">
+                Generated cover letters are signed with this name. Leave blank to sign with the name on the resume.
               </span>
             </label>
             <label className="span-2">

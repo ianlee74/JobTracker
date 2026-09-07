@@ -92,6 +92,7 @@ async function settingsPayload(person) {
   return {
     person_id: person.id,
     person_name: person.name,
+    preferred_name: person.preferred_name,
     email: person.email,
     search_instructions: person.search_instructions,
     resume_path: person.resume_path,

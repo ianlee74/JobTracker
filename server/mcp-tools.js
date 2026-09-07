@@ -56,7 +56,7 @@ function ok(data) {
 
 server.registerTool('list_people', {
   title: 'List people',
-  description: 'List the people (candidates) whose job searches are tracked, with each person\'s job count, document-generation config (standard resume path, documents folder), and search_instructions — that person\'s own guidance for how to look for their jobs. Before searching for jobs for a person, read their search_instructions and follow them.',
+  description: 'List the people (candidates) whose job searches are tracked, with each person\'s job count, preferred_name (the name their generated cover letters are signed with), document-generation config (standard resume path, documents folder), and search_instructions — that person\'s own guidance for how to look for their jobs. Before searching for jobs for a person, read their search_instructions and follow them.',
   inputSchema: {}
 }, async () => ok(listPeople()));
 
@@ -70,19 +70,21 @@ server.registerTool('add_person', {
 
 server.registerTool('update_person', {
   title: 'Update a person',
-  description: 'Rename a person, set their email address (the recipient of their Interested-jobs digest email), and/or set their search_instructions (their standing guidance for how an AI should look for jobs for them — target roles, locations, salary floor, preferred sources, deal-breakers). (Per-person resume/documents settings are changed with configure_document_generation.)',
+  description: 'Rename a person, set their preferred_name (the name their generated cover letters are signed with, when it differs from the name on their resume), set their email address (the recipient of their Interested-jobs digest email), and/or set their search_instructions (their standing guidance for how an AI should look for jobs for them — target roles, locations, salary floor, preferred sources, deal-breakers). (Per-person resume/documents settings are changed with configure_document_generation.)',
   inputSchema: {
     person: z.string().describe('The person\'s current name (or numeric id)'),
     new_name: z.string().optional().describe('The new name'),
+    preferred_name: z.string().optional().describe('The name to sign generated cover letters with, e.g. "Ian Lee" when the resume says "Richard Ian Lee". Empty string to clear, which signs with the name on the resume.'),
     email: z.string().optional().describe('The person\'s email address (empty string to clear)'),
     search_instructions: z.string().optional().describe('Job-search instructions for this person, followed by the AI whenever it searches for their jobs. Replaces the existing instructions (empty string to clear).')
   }
-}, async ({ person, new_name, email, search_instructions }) => {
+}, async ({ person, new_name, preferred_name, email, search_instructions }) => {
   const fields = {};
   if (new_name !== undefined) fields.name = new_name;
+  if (preferred_name !== undefined) fields.preferred_name = preferred_name;
   if (email !== undefined) fields.email = email;
   if (search_instructions !== undefined) fields.search_instructions = search_instructions;
-  if (!Object.keys(fields).length) throw new Error('Provide new_name, email, and/or search_instructions');
+  if (!Object.keys(fields).length) throw new Error('Provide new_name, preferred_name, email, and/or search_instructions');
   return ok(updatePerson(resolvePerson(person).id, fields));
 });
 

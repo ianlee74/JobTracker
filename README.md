@@ -65,7 +65,7 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 | `update_company` | Save company info, mark it a favorite (its jobs win sort ties), or "not interested" (its jobs hide) |
 | `list_people` | The tracked candidates, with job counts, per-person config, and their job-search instructions |
 | `add_person` | Add a person to track jobs for |
-| `update_person` | Rename a person, set their email address, or set their job-search instructions |
+| `update_person` | Rename a person, set their preferred name (how cover letters are signed), email address, or job-search instructions |
 | `generate_interested_email` | Compose the digest email of one person's `Interested` jobs, with candidate feedback links |
 | `generate_documents` | Tailored resume + cover letter for one job |
 | `configure_document_generation` | View/set one person's standard resume path and documents folder |

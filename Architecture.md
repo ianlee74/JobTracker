@@ -228,7 +228,7 @@ Notable modeling decisions:
 The app tracks multiple candidates (e.g. family members). The design threads one `person` concept through every layer rather than partitioning databases:
 
 - Each job belongs to a person; URL uniqueness is per person.
-- Resume path, documents folder, and digest email address are **per-person columns on `people`**, not global settings — generation for a job always uses the config of the job's owner.
+- Resume path, documents folder, digest email address, and preferred name (the name generated cover letters are signed with; empty = the resume's name) are **per-person columns on `people`**, not global settings — generation for a job always uses the config of the job's owner.
 - MCP tools take an optional `person` argument (name or id) resolved by `resolvePerson`, which is only allowed to be omitted while exactly one person exists — the "just works" single-user case stays frictionless, and ambiguity is an explicit error rather than a silent guess.
 
 ## Document generation

@@ -28,7 +28,7 @@ Use the template's header styles for the letterhead and its `LetterBody` style f
 2. The date, then the greeting, each as its own `LetterBody` paragraph.
 3. Opening paragraph: the role, the company, and the single strongest reason the candidate fits.
 4. One or two body paragraphs connecting real experience to the posting's needs.
-5. A brief closing paragraph with a courteous call to action, then a sign-off ("Sincerely,") and the candidate's name as separate `LetterBody` paragraphs.
+5. A brief closing paragraph with a courteous call to action, then a sign-off ("Sincerely,") and the candidate's name as separate `LetterBody` paragraphs. When the conversation gives a signature name (a "Signature" section appended to these instructions), sign with exactly that name; otherwise sign with the name on the resume.
 
 Do not use the resume's section headings, bullets, or role styles in the letter.
 
