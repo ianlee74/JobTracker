@@ -243,12 +243,13 @@ sequenceDiagram
     participant A as Anthropic API (claude-opus-5 by default)
     participant FS as documents dir
 
-    C->>G: generateJobDocuments(job)
+    Note over C: asks the candidate for special instructions<br/>for this application first (dialog / chat)
+    C->>G: generateJobDocuments(job, instructions)
     G->>DB: job + owning person + company info
     G->>G: load skills/*/SKILL.md (instructions, model,<br/>template .docx, max_words)
     G->>G: resumeContentBlock(person)
     Note over G: .docx → extracted text; PDF → document block;<br/>text/md → text block (content only, never formatting)
-    G->>A: resume call — resume + job context (cached blocks)<br/>+ skill + length budget + template skeleton & styles
+    G->>A: resume call — resume + job context (cached blocks)<br/>+ skill + special instructions + length budget<br/>+ template skeleton & styles
     Note over A: http(s) posting fetched by the model<br/>via web_fetch (max 3 uses)
     A-->>G: new word/document.xml
     G->>G: validate well-formedness + word count<br/>(up to 3 attempts, problem fed back)
@@ -265,6 +266,7 @@ The rationale behind the main pieces:
 - **The `.docx` template trick.** Rather than generating a document from scratch (generic-looking) or using a templating library (rigid), the model is given an app-wide template's `word/document.xml` (a placeholder skeleton) and `styles.xml` (named styles such as `SectionHeading`, `RoleHeader`, `Bullet`, plus character styles for right-aligned dates and bold labels) and asked to write a `document.xml` that formats *only* through those styles — no direct formatting, numbering ids, or relationship ids of its own. The output is zipped into a **copy of the template package** ([skills/templates/resume.docx](skills/templates/resume.docx), built by [scripts/build-resume-template.mjs](scripts/build-resume-template.mjs)), so every reference resolves and every person's documents share one look. The standard resume contributes content only — a `.docx` is reduced to its text ([generate.js](server/generate.js)).
 - **Validation gate with retries.** Word refuses malformed XML outright, so `docXmlProblem` checks well-formedness with `fast-xml-parser` before packaging, and `visibleWordCount` checks the document against the skill's `max_words`; a failure of either kind feeds the problem back to the model (up to three attempts). The word count exists because the model cannot see pages: a "two pages" instruction alone barely moved output length, while a stated word budget plus a mechanical check makes it a real constraint.
 - **Skills as editable Markdown.** The writing instructions live in [skills/tailored-resume/SKILL.md](skills/tailored-resume/SKILL.md) and [skills/tailored-cover-letter/SKILL.md](skills/tailored-cover-letter/SKILL.md), loaded at generation time. The user can change *how documents are written* without touching code — the same philosophy as Claude's own skill system. Frontmatter keys configure each document type: `model:` overrides the default model (`claude-opus-5`), `template:` names the `.docx` formatting template (without one the skill produces Markdown), and `max_words:` sets the enforced length budget.
+- **Special instructions as a prompt section, not pasted text.** Before anything is generated, the caller asks the candidate for special instructions for this one application (the ✨ dialog in the UI; the `generate_documents` tool description tells Claude to ask in chat). `specialInstructionsSection` folds them into both documents' prompts as guidance — what to emphasize, tone, what to leave out — framed so the model applies rather than reproduces them, and subordinate to the anti-fabrication rules below.
 - **Anti-fabrication and prompt-injection defenses in the system prompt.** The standard resume is declared the single source of truth (never invent employers, dates, metrics), and the job posting is explicitly framed as *data, not instructions* — a real concern, since postings are arbitrary web content fed into the prompt.
 - **Prompt caching and call ordering.** The resume block and job-context block carry `cache_control` breakpoints; the instruction comes last. So the second call (cover letter) reuses the cached prefix of the first. The cover-letter call receives the just-written resume as **plain text** rather than XML — enough for consistency at a fraction of the tokens.
 - **Streaming + `pause_turn` loop.** Responses stream to avoid HTTP timeouts on multi-minute generations, and the loop continues through `pause_turn` stop reasons (which web_fetch produces). A server-side fallback to `claude-opus-4-8` covers model unavailability.

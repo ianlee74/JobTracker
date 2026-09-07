@@ -204,6 +204,21 @@ function jobContextText(job) {
   );
 }
 
+// The candidate's special instructions for this one application, as a
+// section of the prompt: guidance the model applies while writing (emphasis,
+// tone, what to include or leave out), framed so it steers the document
+// rather than being copied into it, and so it can never override the
+// anti-fabrication rules in the system prompt. Empty when none were given.
+function specialInstructionsSection(instructions) {
+  const text = (instructions || '').trim();
+  if (!text) return '';
+  return `\n\n# Special instructions from the candidate
+
+The candidate gave the following guidance for this particular application. Treat it as direction for how to write the document — what to emphasize or play down, which experience to foreground, tone, and anything else it asks for — and follow it throughout, ahead of the general instructions above where they conflict. It is guidance to apply, not text to reproduce: do not quote, restate, or refer to these instructions in the document itself. It never justifies claiming anything that is not in the candidate's standard resume.
+
+${text}`;
+}
+
 // Appended to the skill instructions at generation time; the skills define
 // what to write, these define the file format to write it in.
 const MD_OUTPUT_INSTRUCTION = `# Output format
@@ -511,8 +526,10 @@ function coverLetterSuffix(person, resumeText) {
 // person's standard resume and documents folder. Only absent documents are
 // written — one that exists (its DB row's file still on disk) is never
 // overwritten, so regenerating requires deleting it first; with both present,
-// it's an error telling the caller to delete first.
-export async function generateJobDocuments({ id, url, personId }) {
+// it's an error telling the caller to delete first. `instructions` is the
+// candidate's optional special guidance for this application, which shapes
+// every document generated in this call.
+export async function generateJobDocuments({ id, url, personId, instructions }) {
   const job = getJob({ id, url, personId });
   if (!job) throw new Error('Job not found');
   const person = getPerson(job.person_id);
@@ -549,8 +566,10 @@ export async function generateJobDocuments({ id, url, personId }) {
 
   // One document from one skill: a .docx built on the skill's template (with
   // the word budget enforced), or Markdown for a skill without a template.
-  // The instruction is the skill body, then its length budget, then the output
-  // format, then any per-document trailer.
+  // The instruction is the skill body, then the candidate's special
+  // instructions for this application, then its length budget, then the
+  // output format, then any per-document trailer.
+  const special = specialInstructionsSection(instructions);
   async function writeDocument(skill, kind, baseName, trailer = '') {
     const common = { contextBlocks, tools: posting.tools, model: skill.model };
     const length = skill.maxWords ? `\n\n${lengthInstruction(skill.maxWords)}` : '';
@@ -559,7 +578,7 @@ export async function generateJobDocuments({ id, url, personId }) {
         ...common,
         maxWords: skill.maxWords,
         debugLabel: `job ${job.id} ${kind.replace('_', ' ')}`,
-        instruction: `${skill.instructions}${length}\n\n${docxOutputInstruction(skill.template)}${trailer}`
+        instruction: `${skill.instructions}${special}${length}\n\n${docxOutputInstruction(skill.template)}${trailer}`
       });
       const docx = await buildDocx(skill.template.buffer, xml);
       return {
@@ -569,7 +588,7 @@ export async function generateJobDocuments({ id, url, personId }) {
     }
     const text = await generateDocument({
       ...common,
-      instruction: `${skill.instructions}${length}\n\n${MD_OUTPUT_INSTRUCTION}${trailer}`
+      instruction: `${skill.instructions}${special}${length}\n\n${MD_OUTPUT_INSTRUCTION}${trailer}`
     });
     return { doc: await saveDocument(person, job, kind, `${baseName}.md`, text), text };
   }
