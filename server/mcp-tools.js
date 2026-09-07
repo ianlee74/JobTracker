@@ -90,10 +90,10 @@ server.registerTool('update_person', {
 
 server.registerTool('list_jobs', {
   title: 'List jobs',
-  description: 'List tracked job opportunities, optionally filtered by person, status, company, free-text search, or date found. Without a person filter, jobs for all people are returned (each row includes person_name).',
+  description: 'List tracked job opportunities, optionally filtered by person, status (one or several), company, free-text search, or date found. Without a person filter, jobs for all people are returned (each row includes person_name).',
   inputSchema: {
     person: z.string().optional().describe('Filter to one person\'s jobs — their name (or numeric id)'),
-    status: statusEnum.optional().describe('Filter to one status'),
+    status: z.union([statusEnum, z.array(statusEnum).min(1)]).optional().describe('Filter by status — a single value or an array of values (jobs matching any of them are returned)'),
     company: z.string().optional().describe('Filter by company name (substring match)'),
     level: z.string().optional().describe(`Filter by seniority level (exact match), e.g. ${LEVELS.slice(0, 4).join(', ')}`),
     q: z.string().optional().describe('Free-text search across title, company, category, fit, note, and salary'),

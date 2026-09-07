@@ -167,7 +167,8 @@ async function handleApi(req, res, url, user) {
     return json(res, 200, listJobs({
       // Non-admins only ever see their own person's jobs, whatever they ask for.
       personId: isAdmin ? (p.get('person') ? Number(p.get('person')) : undefined) : user.person_id,
-      status: p.get('status') || undefined,
+      // ?status=A&status=B (or ?status=A,B) matches any of the listed statuses.
+      status: p.getAll('status').flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean),
       company: p.get('company') || undefined,
       level: p.get('level') || undefined,
       q: p.get('q') || undefined,
