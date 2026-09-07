@@ -102,6 +102,10 @@ await db.addJobs([{ title: 'Platform Eng', company: 'Initech', url: 'https://ini
 await check('skills list deduped case-insensitively across jobs', ['Go', 'Kubernetes', 'Terraform'], jsonBody('/api/missing-skills', H(adminCookie)));
 await check('user only sees own person\'s skills', ['Go', 'Kubernetes'], jsonBody('/api/missing-skills', H(aliceCookie)));
 await check('changing the reason clears the skills', '', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ rejection_reason: 'Not Interested' }), ...H(aliceCookie) }).then(j => j.missing_skills));
+await check('user can record application details', { proposed_salary: 210000, application_notes: 'Asked for fully remote' }, jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Applied', proposed_salary: '$210,000', application_notes: 'Asked for fully remote' }), ...H(aliceCookie) }).then(j => ({ proposed_salary: j.proposed_salary, application_notes: j.application_notes })));
+await check('application details survive a status change', { proposed_salary: 210000, application_notes: 'Asked for fully remote' }, jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Interviewing' }), ...H(aliceCookie) }).then(j => ({ proposed_salary: j.proposed_salary, application_notes: j.application_notes })));
+await check('invalid proposed salary -> 400', 400, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ proposed_salary: 'lots' }), ...H(aliceCookie) }));
+await check('proposed salary can be cleared', null, jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ proposed_salary: null }), ...H(aliceCookie) }).then(j => j.proposed_salary));
 await check('skills search hits the job', 1, jsonBody('/api/jobs?q=terraform', H(adminCookie)).then(j => j.length));
 await check('user cannot edit title -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'x' }), ...H(aliceCookie) }));
 await check('user cannot delete job -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'DELETE', ...H(aliceCookie) }));

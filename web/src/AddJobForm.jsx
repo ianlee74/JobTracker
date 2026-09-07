@@ -33,8 +33,14 @@ const EMPTY = {
   rejection_reason: '',
   rejection_other: '',
   missing_skills: '',
+  proposed_salary: '',
+  application_notes: '',
   note: ''
 };
+
+// Statuses at or past "Applied", where the application details are shown
+// even when still empty.
+const APPLIED_STATUSES = ['Applied', 'Interviewing', 'Offer'];
 
 function formFromJob(job) {
   const stored = job.rejection_reason || '';
@@ -55,6 +61,8 @@ function formFromJob(job) {
     rejection_reason: !stored ? '' : isPreset ? stored : 'Other',
     rejection_other: stored && !isPreset ? stored : '',
     missing_skills: job.missing_skills || '',
+    proposed_salary: job.proposed_salary ?? '',
+    application_notes: job.application_notes || '',
     note: job.note || ''
   };
 }
@@ -110,9 +118,11 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
           form.status === 'Not Moving Forward' && form.rejection_reason === 'Not Qualified'
             ? parseSkills(form.missing_skills).join(', ')
             : '',
+        application_notes: form.application_notes,
         // An empty level lets the server auto-classify (add) / keep it (edit).
         ...(form.level ? { level: form.level } : {})
       };
+      const proposed = form.proposed_salary === '' ? null : Number(form.proposed_salary);
       if (job) {
         // Send min/max only when actually changed; if only the salary string
         // changed the server re-parses the range from it.
@@ -120,6 +130,7 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
         const max = form.salary_max === '' ? null : Number(form.salary_max);
         if (min !== (job.salary_min ?? null)) fields.salary_min = min;
         if (max !== (job.salary_max ?? null)) fields.salary_max = max;
+        if (proposed !== (job.proposed_salary ?? null)) fields.proposed_salary = proposed;
         for (const k of Object.keys(fields)) {
           if (k in job && fields[k] === (job[k] ?? '')) delete fields[k];
         }
@@ -127,6 +138,7 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
         // Omit an empty min/max so the server auto-parses the salary string.
         if (form.salary_min !== '') fields.salary_min = Number(form.salary_min);
         if (form.salary_max !== '') fields.salary_max = Number(form.salary_max);
+        if (proposed != null) fields.proposed_salary = proposed;
       }
       await onSubmit(fields);
       onClose();
@@ -153,6 +165,10 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
       setPickerOpen(false);
     }
   };
+
+  // Application details appear once the job is at/past "Applied", and stay
+  // visible on any status while something is recorded so it can be edited.
+  const showApplied = APPLIED_STATUSES.includes(form.status) || form.proposed_salary !== '' || Boolean(form.application_notes);
 
   const dropProps = {
     onDragOver: (e) => { e.preventDefault(); setDragOver(true); },
@@ -259,6 +275,27 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
               knownSkills={knownSkills}
               placeholder="Comma separated, e.g. Kubernetes, Go"
               onChange={value => setForm(prev => ({ ...prev, missing_skills: value }))}
+            />
+          </label>
+        )}
+        {showApplied && (
+          <label>
+            Proposed salary
+            <input
+              inputMode="numeric"
+              value={formatMoney(form.proposed_salary)}
+              onChange={setMoney('proposed_salary')}
+              placeholder="Minimum you asked for, if the application asked"
+            />
+          </label>
+        )}
+        {showApplied && (
+          <label className="span-2">
+            Application notes
+            <textarea
+              value={form.application_notes}
+              onChange={set('application_notes')}
+              placeholder="Anything about the application worth remembering in an interview"
             />
           </label>
         )}

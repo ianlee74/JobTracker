@@ -187,6 +187,8 @@ erDiagram
         int salary_max "parsed annual USD"
         text rejection_reason "only with Not Moving Forward"
         text missing_skills "comma-delimited; only with Not Qualified"
+        int proposed_salary "min asked for in the application; kept across statuses"
+        text application_notes "application process notes; kept across statuses"
         text note "admin's note"
         text user_note "candidate's note"
         text feedback_token "unguessable; digest email links"

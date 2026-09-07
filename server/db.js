@@ -360,6 +360,34 @@ if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
   }
 }
 
+// Migration: what the candidate put in the application itself. proposed_salary
+// is the minimum annual salary they asked for (if the application asked);
+// application_notes is anything about the application process worth
+// remembering in an interview. Both are prompted for when a job is set to
+// "Applied", but unlike rejection_reason they are NOT cleared when the status
+// moves on — they matter most at Interviewing/Offer.
+{
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!cols.includes('proposed_salary')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN proposed_salary INTEGER');
+  }
+  if (!cols.includes('application_notes')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN application_notes TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+// proposed_salary is stored as whole dollars or NULL. Accepts a number or a
+// numeric string (with $ and commas); anything else is an error, and an empty
+// value clears it.
+export function normalizeProposedSalary(value) {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(String(value).replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`Invalid proposed_salary "${value}" — expected a non-negative dollar amount (or null to clear)`);
+  }
+  return Math.round(n);
+}
+
 function touch(fields) {
   return { ...fields, updated_at: new Date().toISOString() };
 }
@@ -461,9 +489,9 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
   if (level) { where.push('level = ?'); params.push(level); }
   if (since) { where.push('date_found >= ?'); params.push(since); }
   if (q) {
-    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ? OR missing_skills LIKE ?)');
+    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ? OR missing_skills LIKE ? OR application_notes LIKE ?)');
     const like = `%${q}%`;
-    params.push(like, like, like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like, like, like);
   }
   // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
   // so callers know what exists without a second query. person_name saves a
@@ -516,8 +544,8 @@ export function isUrlTracked(url) {
 // Each job may carry its own person_id; defaultPersonId covers the rest.
 export function addJobs(jobs, defaultPersonId) {
   const insert = db.prepare(`
-    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills, proposed_salary, application_notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(person_id, url) DO NOTHING
   `);
   const results = { added: 0, skipped: 0, jobs: [] };
@@ -549,7 +577,9 @@ export function addJobs(jobs, defaultPersonId) {
       job.note || '',
       level,
       reason,
-      reason === 'Not Qualified' ? normalizeSkills(job.missing_skills) : ''
+      reason === 'Not Qualified' ? normalizeSkills(job.missing_skills) : '',
+      normalizeProposedSalary(job.proposed_salary),
+      job.application_notes || ''
     );
     if (info.changes > 0) {
       results.added++;
@@ -561,10 +591,11 @@ export function addJobs(jobs, defaultPersonId) {
   return results;
 }
 
-const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason', 'missing_skills'];
+const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason', 'missing_skills', 'proposed_salary', 'application_notes'];
 
 // The subset of job fields a non-admin user may change on their own jobs.
-export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'missing_skills', 'user_note'];
+// The application details belong to the candidate — they're the one applying.
+export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'missing_skills', 'user_note', 'proposed_salary', 'application_notes'];
 
 export function updateJob({ id, url, personId }, fields) {
   const job = getJob({ id, url, personId });
@@ -594,6 +625,14 @@ export function updateJob({ id, url, personId }, fields) {
     fields = { ...fields, missing_skills: '' };
   } else if ('missing_skills' in fields) {
     fields = { ...fields, missing_skills: normalizeSkills(fields.missing_skills) };
+  }
+  // Application details are deliberately kept across status changes (see the
+  // migration comment); only their shape is normalized here.
+  if ('proposed_salary' in fields) {
+    fields = { ...fields, proposed_salary: normalizeProposedSalary(fields.proposed_salary) };
+  }
+  if ('application_notes' in fields) {
+    fields = { ...fields, application_notes: String(fields.application_notes ?? '') };
   }
   const updates = Object.entries(touch(fields)).filter(([k]) => EDITABLE_FIELDS.includes(k) || k === 'updated_at');
   if (!updates.length) return job;
