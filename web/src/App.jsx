@@ -261,9 +261,11 @@ export default function App() {
   const [usersOpen, setUsersOpen] = useState(false);
   const [generatingIds, setGeneratingIds] = useState(new Set()); // jobs with a generation in flight
   const [generateFor, setGenerateFor] = useState(null); // job whose special-instructions dialog is open
-  // Jobs just set to "Not Moving Forward" stay visible even when the status
-  // filter would hide them, until a rejection reason has been chosen (and the
-  // custom text entered when "Other" is picked).
+  // Jobs whose status was just changed here and whose follow-up prompt is
+  // still open: "Not Moving Forward" until a rejection reason has been chosen
+  // (and the custom text entered when "Other" is picked); "Applied" until the
+  // application-details prompt is dismissed. They stay visible even when the
+  // status filter would hide them.
   const [pinnedIds, setPinnedIds] = useState(new Set());
   // Every skill ever recorded as missing, for the "Not Qualified" suggestions.
   const [knownSkills, setKnownSkills] = useState([]);
@@ -351,7 +353,7 @@ export default function App() {
     try {
       const updated = await updateJob(id, fields);
       setJobs(prev => prev.map(j => (j.id === id ? updated : j)));
-      if (fields.status === 'Not Moving Forward') {
+      if (fields.status === 'Not Moving Forward' || fields.status === 'Applied') {
         setPinnedIds(prev => new Set(prev).add(id));
       } else if (fields.status) {
         unpinJob(id);
@@ -526,7 +528,7 @@ export default function App() {
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
-      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason, job.missing_skills]
+      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason, job.missing_skills, job.application_notes]
         .some(v => (v || '').toLowerCase().includes(text));
     });
 
@@ -716,8 +718,9 @@ export default function App() {
         sort={sort}
         onSort={handleSort}
         knownSkills={skillOptions}
+        promptIds={pinnedIds}
         onUpdate={handleUpdate}
-        onReasonDone={unpinJob}
+        onPromptDone={unpinJob}
         onDelete={handleDelete}
         onEdit={setEditingJob}
         onOpenCompany={setActiveCompany}

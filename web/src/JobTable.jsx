@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, jobHref, parseSkills } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, formatDollars, jobHref, parseSkills } from './constants.js';
 import { documentUrl } from './api.js';
 import SkillsPicker from './SkillsPicker.jsx';
 
@@ -180,6 +180,113 @@ function RejectionReason({ job, knownSkills, onUpdate, onDone }) {
   );
 }
 
+// What the candidate put in the application: the minimum salary they asked
+// for (if the application asked) and anything about the process worth
+// remembering in an interview. Shown under the status once a job is
+// "Applied" — and kept on later statuses, since that's when it matters.
+// `prompt` (set right after the status change) opens the editor; otherwise a
+// compact summary is shown and clicking it opens the editor. Both fields
+// autosave; Done closes the editor and fires onDone so a filtered view can
+// stop holding the row on screen.
+function AppliedDetails({ job, prompt, onUpdate, onDone }) {
+  const storedSalary = job.proposed_salary == null ? '' : String(job.proposed_salary);
+  const storedNotes = job.application_notes || '';
+  const [open, setOpen] = useState(prompt);
+  const [salary, setSalary] = useState(storedSalary); // bare digits
+  const [notes, setNotes] = useState(storedNotes);
+  const latest = useRef({ salary: storedSalary, notes: storedNotes });
+  const timer = useRef(null);
+  const wrap = useRef(null);
+
+  useEffect(() => { if (prompt) setOpen(true); }, [prompt]);
+
+  // Sync external changes (edit modal, MCP refresh) — but never while the
+  // user is typing here, so in-flight keystrokes aren't clobbered.
+  useEffect(() => {
+    if (!wrap.current?.contains(document.activeElement)) {
+      setSalary(storedSalary);
+      setNotes(storedNotes);
+      latest.current = { salary: storedSalary, notes: storedNotes };
+    }
+  }, [job.id, storedSalary, storedNotes]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const save = () => {
+    const fields = {};
+    const proposed = latest.current.salary === '' ? null : Number(latest.current.salary);
+    if (proposed !== (job.proposed_salary ?? null)) fields.proposed_salary = proposed;
+    if (latest.current.notes !== storedNotes) fields.application_notes = latest.current.notes;
+    if (Object.keys(fields).length) onUpdate(job.id, fields);
+  };
+  const queueSave = () => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(save, 800);
+  };
+  const flush = () => {
+    clearTimeout(timer.current);
+    save();
+  };
+
+  if (!open) {
+    const hasAny = job.proposed_salary != null || storedNotes;
+    return (
+      <button
+        type="button"
+        className="applied-summary"
+        onClick={() => setOpen(true)}
+        title={hasAny ? `${storedNotes || 'No application notes'}\n\nClick to edit` : 'Record the salary you asked for and notes about the application'}
+      >
+        {!hasAny && <span>+ Application details</span>}
+        {job.proposed_salary != null && <span>Asked {formatDollars(job.proposed_salary)}</span>}
+        {storedNotes && <span className="applied-notes-preview">📝 {storedNotes}</span>}
+      </button>
+    );
+  }
+
+  return (
+    <div className="applied-wrap" ref={wrap}>
+      <input
+        className="reason-input"
+        inputMode="numeric"
+        placeholder="Proposed salary (if asked)"
+        title="The minimum salary you specified in the application, if it asked"
+        value={salary === '' ? '' : formatDollars(salary)}
+        onChange={e => {
+          const digits = e.target.value.replace(/[^0-9]/g, '');
+          setSalary(digits);
+          latest.current.salary = digits;
+          queueSave();
+        }}
+        onBlur={flush}
+      />
+      <textarea
+        className="reason-input applied-notes"
+        placeholder="Application notes — anything worth remembering in an interview"
+        title="Notes about the application process to remember later in an interview"
+        value={notes}
+        onChange={e => {
+          setNotes(e.target.value);
+          latest.current.notes = e.target.value;
+          queueSave();
+        }}
+        onBlur={flush}
+      />
+      <button
+        type="button"
+        className="applied-done-btn"
+        onClick={() => {
+          flush();
+          setOpen(false);
+          onDone(job.id);
+        }}
+      >
+        Done
+      </button>
+    </div>
+  );
+}
+
 const DOC_LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
 
 // One document's control: clicking the name opens a small menu with
@@ -305,8 +412,9 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, isAdmin, knownSkills, onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, knownSkills, promptOpen, onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
+  const showApplied = job.status === 'Applied' || job.proposed_salary != null || Boolean(job.application_notes);
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
   const span = wide ? 2 : undefined;
@@ -358,7 +466,8 @@ function JobRow({ job, wide, isAdmin, knownSkills, onUpdate, onReasonDone, onDel
         >
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        {job.status === 'Not Moving Forward' && <RejectionReason job={job} knownSkills={knownSkills} onUpdate={onUpdate} onDone={onReasonDone} />}
+        {job.status === 'Not Moving Forward' && <RejectionReason job={job} knownSkills={knownSkills} onUpdate={onUpdate} onDone={onPromptDone} />}
+        {showApplied && <AppliedDetails job={job} prompt={promptOpen && job.status === 'Applied'} onUpdate={onUpdate} onDone={onPromptDone} />}
       </td>
       {!wide && (
         <td>
@@ -446,7 +555,9 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
   );
 }
 
-export default function JobTable({ jobs, sort, onSort, knownSkills = [], onUpdate, onReasonDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
+// promptIds: jobs whose status was just changed here and whose follow-up
+// prompt (rejection reason, application details) hasn't been completed yet.
+export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptIds = new Set(), onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -475,8 +586,9 @@ export default function JobTable({ jobs, sort, onSort, knownSkills = [], onUpdat
               wide={wide}
               isAdmin={isAdmin}
               knownSkills={knownSkills}
+              promptOpen={promptIds.has(job.id)}
               onUpdate={onUpdate}
-              onReasonDone={onReasonDone}
+              onPromptDone={onPromptDone}
               onDelete={onDelete}
               onEdit={onEdit}
               onOpenCompany={onOpenCompany}

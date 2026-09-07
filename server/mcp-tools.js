@@ -47,7 +47,9 @@ const jobInput = {
   status: statusEnum.optional().describe('Initial status (defaults to "new")'),
   note: z.string().optional().describe('Free-form note'),
   rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" (only stored with that status). Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else.`),
-  missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only stored when rejection_reason is "Not Qualified".')
+  missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only stored when rejection_reason is "Not Qualified".'),
+  proposed_salary: z.number().int().nullable().optional().describe('The minimum annual salary (in dollars) the candidate asked for in their application, if the application asked. Usually recorded when the status becomes "Applied".'),
+  application_notes: z.string().optional().describe('Notes about the application process worth remembering later in an interview (what was asked, what was claimed, who was contacted, etc.).')
 };
 
 function ok(data) {
@@ -144,6 +146,8 @@ server.registerTool('update_job', {
     status: statusEnum.optional(),
     rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" — set it when setting that status. Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else. Cleared automatically if the status changes to anything else.`),
     missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only kept while rejection_reason is "Not Qualified"; cleared automatically otherwise.'),
+    proposed_salary: z.number().int().nullable().optional().describe('The minimum annual salary (in dollars) the candidate asked for in their application — offer to record it when setting the status to "Applied". null clears it. Kept when the status later moves on (Interviewing, Offer, …).'),
+    application_notes: z.string().optional().describe('Notes about the application process worth remembering in an interview — offer to record them when setting the status to "Applied". Replaces the existing notes; kept across later status changes.'),
     note: z.string().optional().describe('Replaces the existing note'),
     append_note: z.string().optional().describe('Appended to the existing note on a new line instead of replacing it'),
     title: z.string().optional(),

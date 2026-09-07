@@ -23,6 +23,11 @@ export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'E
 
 export const EMPLOYEE_COUNTS = ['1-10', '11-50', '51-200', '201-500', '501-1,000', '1,001-5,000', '5,001-10,000', '10,000+'];
 
+// Whole-dollar amount as "$200,000".
+export function formatDollars(n) {
+  return '$' + Number(n).toLocaleString('en-US');
+}
+
 // Compact display of a job's parsed salary range ("$200K – $250K"), or null
 // when nothing was parsed so the caller can fall back to the raw salary string.
 export function formatSalaryRange({ salary_min: min, salary_max: max }) {
