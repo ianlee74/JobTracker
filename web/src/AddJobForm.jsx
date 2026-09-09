@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { STATUSES, LEVELS, REJECTION_REASONS, parseSkills } from './constants.js';
+import { STATUSES, LEVELS, REJECTION_REASONS, parseSkills, parseNames } from './constants.js';
 import { uploadPosting } from './api.js';
 import FilePicker from './FilePicker.jsx';
 import SkillsPicker from './SkillsPicker.jsx';
@@ -35,6 +35,7 @@ const EMPTY = {
   missing_skills: '',
   proposed_salary: '',
   application_notes: '',
+  referred_by: '',
   note: ''
 };
 
@@ -63,13 +64,16 @@ function formFromJob(job) {
     missing_skills: job.missing_skills || '',
     proposed_salary: job.proposed_salary ?? '',
     application_notes: job.application_notes || '',
+    referred_by: job.referred_by || '',
     note: job.note || ''
   };
 }
 
 // Shared add/edit form. In edit mode (`job` given) submit sends only the
 // changed fields, so untouched values can't clobber concurrent MCP updates.
-export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSubmit, onClose }) {
+// `companies` supplies the Referred-by suggestions: everyone who has referred
+// the candidate to the typed company's jobs before.
+export function JobForm({ jobs, job, companies = [], knownSkills = [], title, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => (job ? formFromJob(job) : { ...EMPTY, date_found: today() }));
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -81,6 +85,11 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
     () => [...new Set(jobs.map(j => j.category).filter(Boolean))].sort(),
     [jobs]
   );
+
+  const referralOptions = useMemo(() => {
+    const company = companies.find(c => c.name === form.company.trim());
+    return parseNames(company?.referrals);
+  }, [companies, form.company]);
 
   const set = (field) => (e) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -119,6 +128,7 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
             ? parseSkills(form.missing_skills).join(', ')
             : '',
         application_notes: form.application_notes,
+        referred_by: form.referred_by.trim(),
         // An empty level lets the server auto-classify (add) / keep it (edit).
         ...(form.level ? { level: form.level } : {})
       };
@@ -252,6 +262,19 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
             <input inputMode="numeric" value={formatMoney(form.salary_max)} onChange={setMoney('salary_max')} placeholder="Auto" />
           </div>
         </label>
+        <label>
+          Referred by
+          <input
+            list="referral-options"
+            value={form.referred_by}
+            onChange={set('referred_by')}
+            placeholder={referralOptions.length ? 'Pick a past referral or type a name' : 'Who referred you, if anyone'}
+            title="Who referred you to this job. A new name is remembered for this company's other jobs."
+          />
+          <datalist id="referral-options">
+            {referralOptions.map(n => <option key={n} value={n} />)}
+          </datalist>
+        </label>
         {form.status === 'Not Moving Forward' && (
           <label>
             Why not moving forward
@@ -330,7 +353,7 @@ export function JobForm({ jobs, job, knownSkills = [], title, submitLabel, onSub
   );
 }
 
-export default function AddJobForm({ jobs, knownSkills, onAdd }) {
+export default function AddJobForm({ jobs, companies, knownSkills, onAdd }) {
   const [open, setOpen] = useState(false);
 
   if (!open) {
@@ -343,6 +366,7 @@ export default function AddJobForm({ jobs, knownSkills, onAdd }) {
   return (
     <JobForm
       jobs={jobs}
+      companies={companies}
       knownSkills={knownSkills}
       title="Add a job"
       submitLabel="Add job"

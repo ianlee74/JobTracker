@@ -17,6 +17,10 @@ export function parseSkills(text) {
   return out;
 }
 
+// A company's referrals (who has referred the candidate to its jobs) are
+// stored the same way, so they share the parser.
+export const parseNames = parseSkills;
+
 export const LEVELS = ['Senior', 'Staff', 'Principal', 'Lead', 'Manager', 'Senior Manager', 'Director', 'Senior Director', 'VP', 'Executive', 'Other'];
 
 export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'Enterprise', 'Agency / Consultancy', 'Non-profit', 'Government', 'Other'];

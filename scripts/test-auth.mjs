@@ -107,6 +107,18 @@ await check('application details survive a status change', { proposed_salary: 21
 await check('invalid proposed salary -> 400', 400, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ proposed_salary: 'lots' }), ...H(aliceCookie) }));
 await check('proposed salary can be cleared', null, jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ proposed_salary: null }), ...H(aliceCookie) }).then(j => j.proposed_salary));
 await check('skills search hits the job', 1, jsonBody('/api/jobs?q=terraform', H(adminCookie)).then(j => j.length));
+
+// --- referrals (a job's referred_by feeds its company's referrals list) ---
+await check('user can set referred_by on own job (trimmed)', 'Jane Doe', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ referred_by: '  Jane Doe ' }), ...H(aliceCookie) }).then(j => j.referred_by));
+await check('referrer is added to the company', 'Jane Doe', jsonBody('/api/company?name=Globex', H(aliceCookie)).then(c => c.referrals));
+await db.addJobs([{ title: 'Eng II', company: 'Globex', url: 'https://globex.example/3', person_id: alice.id, referred_by: 'John Roe' }]);
+await db.addJobs([{ title: 'Eng III', company: 'Globex', url: 'https://globex.example/4', person_id: alice.id, referred_by: 'JANE DOE' }]);
+await check('added jobs append referrers, deduped case-insensitively', 'Jane Doe, John Roe', jsonBody('/api/company?name=Globex', H(adminCookie)).then(c => c.referrals));
+await check('clearing referred_by keeps the company list', 'Jane Doe, John Roe', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ referred_by: '' }), ...H(aliceCookie) }).then(() => jsonBody('/api/company?name=Globex', H(adminCookie))).then(c => c.referrals));
+await check('referred_by search hits the job', ['https://globex.example/3'], jsonBody('/api/jobs?q=john+roe', H(adminCookie)).then(j => j.map(x => x.url)));
+await check('admin can replace the referrals list (normalized)', 'Ann Lee', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ referrals: ['Ann Lee', 'ann lee', ' '] }), ...H(adminCookie) }).then(c => c.referrals));
+await check('companies list carries referrals', 'Ann Lee', jsonBody('/api/companies', H(adminCookie)).then(cs => cs.find(c => c.name === 'Globex').referrals));
+await check('user cannot edit referrals -> 403', 403, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ referrals: 'x' }), ...H(aliceCookie) }));
 await check('user cannot edit title -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'x' }), ...H(aliceCookie) }));
 await check('user cannot delete job -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'DELETE', ...H(aliceCookie) }));
 await check('user cannot patch other job -> 404', 404, status(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Interested' }), ...H(aliceCookie) }));
