@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
-import { STATUSES, STATUS_COLORS, LEVELS, parseSkills } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
@@ -359,6 +359,8 @@ export default function App() {
         unpinJob(id);
       }
       setStats(await fetchStats(personId));
+      // A new Referred-by name lands on the company's referrals list server-side.
+      if ('referred_by' in fields) setCompanies(await fetchCompanies());
       flashSaved();
     } catch (err) {
       setError(err.message);
@@ -381,6 +383,7 @@ export default function App() {
     const updated = await updateJob(editingJob.id, fields);
     setJobs(prev => prev.map(j => (j.id === editingJob.id ? updated : j)));
     setStats(await fetchStats(personId));
+    if ('referred_by' in fields || 'company' in fields) setCompanies(await fetchCompanies());
     flashSaved();
   };
 
@@ -513,6 +516,13 @@ export default function App() {
     [companies]
   );
 
+  // Company name -> everyone who has referred the candidate to its jobs, for
+  // the Referred-by drop-downs.
+  const companyReferrals = useMemo(
+    () => new Map(companies.filter(c => c.referrals).map(c => [c.name, parseNames(c.referrals)])),
+    [companies]
+  );
+
   const visibleJobs = useMemo(() => {
     const text = textFilter.trim().toLowerCase();
     const dateMin =
@@ -528,7 +538,7 @@ export default function App() {
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
-      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason, job.missing_skills, job.application_notes]
+      return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason, job.missing_skills, job.application_notes, job.referred_by]
         .some(v => (v || '').toLowerCase().includes(text));
     });
 
@@ -608,7 +618,7 @@ export default function App() {
               ✉ Email Interested
             </button>
           )}
-          {!activeCompany && <AddJobForm jobs={jobs} knownSkills={skillOptions} onAdd={handleAdd} />}
+          {!activeCompany && <AddJobForm jobs={jobs} companies={companies} knownSkills={skillOptions} onAdd={handleAdd} />}
           {isAdmin && user.auth_enabled && (
             <button className="clear-btn settings-btn" onClick={() => setUsersOpen(true)} title="Manage users">👥</button>
           )}
@@ -637,7 +647,7 @@ export default function App() {
         <CompanyPage
           company={
             companies.find(c => c.name === activeCompany)
-            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', not_interested: 0 }
+            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', referrals: '', not_interested: 0 }
           }
           jobs={jobs.filter(j => j.company === activeCompany)}
           onBack={() => setActiveCompany(null)}
@@ -730,6 +740,7 @@ export default function App() {
         generatingIds={generatingIds}
         flaggedCompanies={flaggedCompanies}
         favoriteCompanies={favoriteCompanies}
+        companyReferrals={companyReferrals}
         isAdmin={isAdmin}
       />
       )}
@@ -774,6 +785,7 @@ export default function App() {
           <JobForm
             jobs={jobs}
             job={editingJob}
+            companies={companies}
             knownSkills={skillOptions}
             title={`Edit: ${editingJob.title}`}
             submitLabel="Save changes"

@@ -62,7 +62,7 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 | `delete_job` | Remove an entry (prefer status "Not Moving Forward") |
 | `get_summary` | Counts by status + latest find date (optionally per person) |
 | `list_companies` | Every company with tracked jobs or saved info, incl. favorite / not-interested flags |
-| `update_company` | Save company info, mark it a favorite (its jobs win sort ties), or "not interested" (its jobs hide) |
+| `update_company` | Save company info and referrals, mark it a favorite (its jobs win sort ties), or "not interested" (its jobs hide) |
 | `list_people` | The tracked candidates, with job counts, per-person config, and their job-search instructions |
 | `add_person` | Add a person to track jobs for |
 | `update_person` | Rename a person, set their preferred name (how cover letters are signed), email address, or job-search instructions |
@@ -77,6 +77,8 @@ Statuses: `new`, `Interested`, `Applied`, `Interviewing`, `Offer`, `Not Moving F
 `Not Moving Forward` takes a **rejection reason** (`Not Interested`, `Not Qualified`, `Over Qualified`, `Low Salary`, `Missing Benefits`, `Not Remote`, `Not Interested in Location`, `Not Interested in Company`, or free text). A `Not Qualified` reason adds a third prompt for the **missing skills** — a comma-delimited list of what the posting wanted that the candidate lacks (`missing_skills`; e.g. `Kubernetes, Go`). The UI suggests every skill previously entered, and the list is cleared automatically if the status or reason changes to anything else.
 
 `Applied` prompts for two optional **application details**: the **proposed salary** (`proposed_salary` — the minimum annual salary you specified in the application, if it asked) and **application notes** (`application_notes` — anything about the application process worth remembering later in an interview). In the UI the prompt opens under the status right after the change and collapses to a one-line summary when you click Done; click the summary (or edit the job) to change them later. Unlike the rejection reason, these are **kept** when the status moves on to `Interviewing`, `Offer`, or anything else — that's when they're most useful — and they can be set or cleared through `update_job` at any time.
+
+Any job can record who **referred** you to it (`referred_by` — a person's name). Each company keeps a **referrals** list (`referrals` on the company — everyone who has referred you to that company's jobs, comma-delimited), and the two stay in sync automatically: a new `referred_by` name is added to its company's list, and the list is offered as a drop-down for `Referred by` on the company's other jobs (in the job row, under the company name, and in the add/edit form). Clearing a job's `referred_by` leaves the company list alone. The list is editable on the company page and through `update_company` (`referrals` replaces it, `add_referrals` appends).
 
 Every job also has a seniority **level** used for grouping and filtering: `Senior`, `Staff`, `Principal`, `Lead`, `Manager`, `Senior Manager`, `Director`, `Senior Director`, `VP`, `Executive`, or `Other`. `add_jobs` accepts an optional `level`; when omitted, the level is classified automatically from the job title (e.g. "Sr. Engineering Manager, Platform" → `Senior Manager`). Misclassifications can be corrected inline in the UI's Level column or via `update_job`.
 
@@ -136,7 +138,7 @@ The web server also exposes the data at `http://localhost:7080/api`:
 - `GET /api/jobs/:id`, `PATCH /api/jobs/:id`, `DELETE /api/jobs/:id`
 - `GET /api/people`, `POST /api/people`, `GET|PATCH|DELETE /api/people/:id` — the tracked candidates (delete requires the person to have no jobs)
 - `GET /api/companies` — every company with tracked jobs or saved info (incl. `favorite` and `not_interested` flags)
-- `GET|PATCH /api/company?name=<name>` — one company's info; PATCH upserts fields (`website`, `note`, `company_type`, `employee_count`, `not_interested`, `favorite`)
+- `GET|PATCH /api/company?name=<name>` — one company's info; PATCH upserts fields (`website`, `note`, `company_type`, `employee_count`, `referrals` — comma-delimited string or array, `not_interested`, `favorite`)
 - `GET /api/stats` — query param: `person` (id)
 - `GET /api/settings?person=<id>`, `PATCH /api/settings?person=<id>` — that person's document-generation settings (and `name`, `email`)
 - `POST /api/interested-email?person=<id>` — compose the Interested-jobs digest email (`{ to, subject, html, text }`); `GET /api/interested-email/preview?person=<id>` renders it with copy buttons

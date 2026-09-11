@@ -547,6 +547,29 @@ tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
   text-overflow: ellipsis;
 }
 
+/* Referred-by, under the company name in a job row. */
+.referral-summary {
+  display: block;
+  margin-top: 3px;
+  padding: 0;
+  border: none;
+  background: none;
+  max-width: 100%;
+  text-align: left;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.referral-summary:hover { color: var(--text); }
+/* The empty prompt stays out of the way until the row is hovered or focused. */
+.referral-summary.referral-empty { opacity: 0; }
+tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focus-visible { opacity: 1; }
+.referral-edit { margin-top: 4px; }
+
 .level-select {
   padding: 5px 8px;
   border-radius: 6px;

@@ -287,6 +287,70 @@ function AppliedDetails({ job, prompt, onUpdate, onDone }) {
   );
 }
 
+// Who referred the candidate to this job, shown under the company name.
+// Collapsed it reads "↪ Jane Doe" (or a hover-revealed "+ Referral" when
+// empty); clicking opens a text box whose drop-down lists everyone who has
+// referred the candidate to this company's jobs before. A new name is saved
+// and remembered for the company. Saves on Enter or blur; Escape cancels.
+function ReferredBy({ job, referrals, onUpdate }) {
+  const stored = job.referred_by || '';
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(stored);
+  const cancelled = useRef(false);
+
+  useEffect(() => { if (!open) setText(stored); }, [job.id, stored, open]);
+
+  const commit = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+    } else if (text.trim() !== stored) {
+      onUpdate(job.id, { referred_by: text.trim() });
+    }
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className={`referral-summary${stored ? '' : ' referral-empty'}`}
+        onClick={() => setOpen(true)}
+        title={stored ? `Referred by ${stored}\n\nClick to change` : 'Record who referred you to this job'}
+      >
+        {stored ? `↪ ${stored}` : '+ Referral'}
+      </button>
+    );
+  }
+
+  const listId = `referrals-${job.id}`;
+  return (
+    <div className="referral-edit">
+      <input
+        autoFocus
+        className="reason-input"
+        list={listId}
+        placeholder="Referred by…"
+        title="Who referred you to this job (pick a past referral or type a name)"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.blur(); // commits via onBlur
+          } else if (e.key === 'Escape') {
+            cancelled.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      <datalist id={listId}>
+        {referrals.map(n => <option key={n} value={n} />)}
+      </datalist>
+    </div>
+  );
+}
+
 const DOC_LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
 
 // One document's control: clicking the name opens a small menu with
@@ -412,7 +476,7 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, isAdmin, knownSkills, promptOpen, onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const showApplied = job.status === 'Applied' || job.proposed_salary != null || Boolean(job.application_notes);
   const salaryFlagged = job.salary_confidence === 'flag';
@@ -435,6 +499,7 @@ function JobRow({ job, wide, isAdmin, knownSkills, promptOpen, onUpdate, onPromp
         </button>
         {companyFavorite && <span className="fav-badge" title="Favorite company — its jobs are listed first">★</span>}
         {companyNotInterested && <span className="ni-badge" title="Company marked Not Interested">🚫</span>}
+        <ReferredBy job={job} referrals={referrals} onUpdate={onUpdate} />
       </td>
       <td>{job.category}</td>
       <td>
@@ -557,7 +622,9 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
 
 // promptIds: jobs whose status was just changed here and whose follow-up
 // prompt (rejection reason, application details) hasn't been completed yet.
-export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptIds = new Set(), onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, isAdmin = true }) {
+// companyReferrals: company name -> names of past referrers, for the
+// Referred-by drop-down.
+export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptIds = new Set(), onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, companyReferrals = new Map(), isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -586,6 +653,7 @@ export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptI
               wide={wide}
               isAdmin={isAdmin}
               knownSkills={knownSkills}
+              referrals={companyReferrals.get(job.company) || []}
               promptOpen={promptIds.has(job.id)}
               onUpdate={onUpdate}
               onPromptDone={onPromptDone}

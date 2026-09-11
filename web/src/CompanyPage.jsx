@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref } from './constants.js';
+import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref, parseNames } from './constants.js';
 
 // Preset dropdown that still displays a custom stored value (e.g. free text
 // saved through the MCP server) by listing it as an extra option.
@@ -13,17 +13,32 @@ function PresetSelect({ value, options, placeholder, onChange }) {
   );
 }
 
-// Info page for one company: website, free-form notes, the favorite star, the
-// "Not Interested" flag, and the company's tracked jobs. Changes save automatically.
+// Info page for one company: website, free-form notes, referrals (who has
+// referred the candidate to its jobs), the favorite star, the "Not Interested"
+// flag, and the company's tracked jobs. Changes save automatically.
 export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = true }) {
   const [website, setWebsite] = useState(company.website || '');
   const [note, setNote] = useState(company.note || '');
+  const [referrals, setReferrals] = useState(company.referrals || '');
   const noteTimer = useRef(null);
 
   useEffect(() => {
     setWebsite(company.website || '');
     setNote(company.note || '');
+    setReferrals(company.referrals || '');
   }, [company.name]);
+
+  // Referrals are also added automatically when a job's Referred-by is set;
+  // pick those up unless the field is being edited right now.
+  useEffect(() => {
+    if (document.activeElement?.name !== 'referrals') setReferrals(company.referrals || '');
+  }, [company.referrals]);
+
+  const saveReferrals = () => {
+    const tidy = parseNames(referrals).join(', ');
+    setReferrals(tidy);
+    if (tidy !== (company.referrals || '')) onSave({ referrals: tidy });
+  };
 
   useEffect(() => () => clearTimeout(noteTimer.current), []);
 
@@ -103,6 +118,17 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
               />
             </label>
             <label>
+              Referrals
+              <input
+                name="referrals"
+                value={referrals}
+                onChange={e => setReferrals(e.target.value)}
+                onBlur={saveReferrals}
+                placeholder="People who have referred you to this company's jobs — comma separated"
+                title="Offered as a drop-down for Referred by on this company's jobs. A new Referred-by name is added here automatically."
+              />
+            </label>
+            <label>
               Notes
               <textarea
                 value={note}
@@ -124,6 +150,7 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
             {company.website && (
               <div><strong>Website:</strong> <a href={company.website} target="_blank" rel="noopener noreferrer">{company.website}</a></div>
             )}
+            {company.referrals && <div><strong>Referrals:</strong> {company.referrals}</div>}
             {company.note && <div className="note-readonly">{company.note}</div>}
           </div>
         )}
@@ -139,10 +166,11 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
               <thead>
                 <tr>
                   <th style={{ width: '12%' }}>Found</th>
-                  <th style={{ width: '44%' }}>Title</th>
-                  <th style={{ width: '14%' }}>Level</th>
-                  <th style={{ width: '16%' }}>Salary</th>
-                  <th style={{ width: '14%' }}>Status</th>
+                  <th style={{ width: '36%' }}>Title</th>
+                  <th style={{ width: '12%' }}>Level</th>
+                  <th style={{ width: '14%' }}>Salary</th>
+                  <th style={{ width: '13%' }}>Status</th>
+                  <th style={{ width: '13%' }}>Referred by</th>
                 </tr>
               </thead>
               <tbody>
@@ -155,6 +183,7 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
                     <td>{job.level}</td>
                     <td>{formatSalaryRange(job) ?? job.salary}</td>
                     <td style={{ color: STATUS_COLORS[job.status] || 'inherit', fontWeight: 600 }}>{job.status}</td>
+                    <td>{job.referred_by || '—'}</td>
                   </tr>
                 ))}
               </tbody>

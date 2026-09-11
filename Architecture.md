@@ -189,6 +189,7 @@ erDiagram
         text missing_skills "comma-delimited; only with Not Qualified"
         int proposed_salary "min asked for in the application; kept across statuses"
         text application_notes "application process notes; kept across statuses"
+        text referred_by "who referred the candidate; feeds companies.referrals"
         text note "admin's note"
         text user_note "candidate's note"
         text feedback_token "unguessable; digest email links"
@@ -202,6 +203,7 @@ erDiagram
         text note
         text company_type
         text employee_count
+        text referrals "comma-delimited names; auto-fed by jobs.referred_by"
         int not_interested "hides its jobs by default"
         int favorite "its jobs win sort ties"
     }

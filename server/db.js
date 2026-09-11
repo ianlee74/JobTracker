@@ -34,6 +34,11 @@ export function normalizeSkills(text) {
   return parseSkills(text).join(', ');
 }
 
+// Referral names (companies.referrals) are stored the same way — a
+// comma-delimited, case-insensitively deduped list — so they share the helpers.
+export const parseNames = parseSkills;
+export const normalizeNames = normalizeSkills;
+
 export const LEVELS = ['Senior', 'Staff', 'Principal', 'Lead', 'Manager', 'Senior Manager', 'Director', 'Senior Director', 'VP', 'Executive', 'Other'];
 
 export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'Enterprise', 'Agency / Consultancy', 'Non-profit', 'Government', 'Other'];
@@ -376,6 +381,22 @@ if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
   }
 }
 
+// Migration: referrals. jobs.referred_by is who referred the candidate to the
+// job, if anyone; companies.referrals is the comma-delimited list of everyone
+// who has ever referred them to that company's jobs. The list is maintained
+// automatically — setting referred_by on a job adds the name to its company's
+// list — so the UI can offer it as a drop-down on the company's other jobs.
+{
+  const jobCols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!jobCols.includes('referred_by')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN referred_by TEXT NOT NULL DEFAULT ''");
+  }
+  const companyCols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  if (!companyCols.includes('referrals')) {
+    db.exec("ALTER TABLE companies ADD COLUMN referrals TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
 // numeric string (with $ and commas); anything else is an error, and an empty
 // value clears it.
@@ -489,9 +510,9 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
   if (level) { where.push('level = ?'); params.push(level); }
   if (since) { where.push('date_found >= ?'); params.push(since); }
   if (q) {
-    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ? OR missing_skills LIKE ? OR application_notes LIKE ?)');
+    where.push('(title LIKE ? OR company LIKE ? OR category LIKE ? OR fit LIKE ? OR note LIKE ? OR user_note LIKE ? OR salary LIKE ? OR rejection_reason LIKE ? OR missing_skills LIKE ? OR application_notes LIKE ? OR referred_by LIKE ?)');
     const like = `%${q}%`;
-    params.push(like, like, like, like, like, like, like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like, like, like, like);
   }
   // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
   // so callers know what exists without a second query. person_name saves a
@@ -544,8 +565,8 @@ export function isUrlTracked(url) {
 // Each job may carry its own person_id; defaultPersonId covers the rest.
 export function addJobs(jobs, defaultPersonId) {
   const insert = db.prepare(`
-    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills, proposed_salary, application_notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills, proposed_salary, application_notes, referred_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(person_id, url) DO NOTHING
   `);
   const results = { added: 0, skipped: 0, jobs: [] };
@@ -561,6 +582,7 @@ export function addJobs(jobs, defaultPersonId) {
     const range = job.salary_min != null || job.salary_max != null
       ? { min: job.salary_min ?? null, max: job.salary_max ?? null }
       : parseSalary(job.salary);
+    const referredBy = String(job.referred_by ?? '').trim();
     const info = insert.run(
       personId,
       job.date_found || new Date().toISOString().slice(0, 10),
@@ -579,10 +601,12 @@ export function addJobs(jobs, defaultPersonId) {
       reason,
       reason === 'Not Qualified' ? normalizeSkills(job.missing_skills) : '',
       normalizeProposedSalary(job.proposed_salary),
-      job.application_notes || ''
+      job.application_notes || '',
+      referredBy
     );
     if (info.changes > 0) {
       results.added++;
+      if (referredBy) addCompanyReferrals(job.company, [referredBy]);
       results.jobs.push(getJob({ id: info.lastInsertRowid }));
     } else {
       results.skipped++;
@@ -591,11 +615,12 @@ export function addJobs(jobs, defaultPersonId) {
   return results;
 }
 
-const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason', 'missing_skills', 'proposed_salary', 'application_notes'];
+const EDITABLE_FIELDS = ['person_id', 'date_found', 'title', 'company', 'url', 'category', 'salary', 'salary_min', 'salary_max', 'salary_confidence', 'fit', 'status', 'note', 'user_note', 'level', 'rejection_reason', 'missing_skills', 'proposed_salary', 'application_notes', 'referred_by'];
 
 // The subset of job fields a non-admin user may change on their own jobs.
-// The application details belong to the candidate — they're the one applying.
-export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'missing_skills', 'user_note', 'proposed_salary', 'application_notes'];
+// The application details and the referral belong to the candidate — they're
+// the one applying, and the one who knows who referred them.
+export const USER_EDITABLE_JOB_FIELDS = ['status', 'rejection_reason', 'missing_skills', 'user_note', 'proposed_salary', 'application_notes', 'referred_by'];
 
 export function updateJob({ id, url, personId }, fields) {
   const job = getJob({ id, url, personId });
@@ -634,11 +659,21 @@ export function updateJob({ id, url, personId }, fields) {
   if ('application_notes' in fields) {
     fields = { ...fields, application_notes: String(fields.application_notes ?? '') };
   }
+  if ('referred_by' in fields) {
+    fields = { ...fields, referred_by: String(fields.referred_by ?? '').trim() };
+  }
   const updates = Object.entries(touch(fields)).filter(([k]) => EDITABLE_FIELDS.includes(k) || k === 'updated_at');
   if (!updates.length) return job;
   const sql = `UPDATE jobs SET ${updates.map(([k]) => `${k} = ?`).join(', ')} WHERE id = ?`;
   db.prepare(sql).run(...updates.map(([, v]) => v), job.id);
-  return getJob({ id: job.id });
+  const updated = getJob({ id: job.id });
+  // A referral name is remembered on the job's company so it can be offered
+  // for the company's other jobs. Clearing referred_by leaves the list alone —
+  // the person still referred the candidate once.
+  if (updated.referred_by && ('referred_by' in fields || 'company' in fields)) {
+    addCompanyReferrals(updated.company, [updated.referred_by]);
+  }
+  return updated;
 }
 
 // Every distinct skill ever recorded as missing (optionally for one person),
@@ -668,7 +703,7 @@ export function listCompanies() {
   const counts = db.prepare('SELECT company, COUNT(*) AS n FROM jobs GROUP BY company').all();
   const result = [];
   for (const { company, n } of counts) {
-    result.push({ name: company, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, favorite: 0, ...(byName.get(company) || {}), job_count: n });
+    result.push({ name: company, website: '', note: '', company_type: '', employee_count: '', referrals: '', not_interested: 0, favorite: 0, ...(byName.get(company) || {}), job_count: n });
     byName.delete(company);
   }
   for (const row of byName.values()) result.push({ ...row, job_count: 0 });
@@ -678,10 +713,10 @@ export function listCompanies() {
 export function getCompany(name) {
   const row = db.prepare('SELECT * FROM companies WHERE name = ?').get(name);
   const count = db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company = ?').get(name);
-  return { name, website: '', note: '', company_type: '', employee_count: '', not_interested: 0, favorite: 0, ...(row || {}), job_count: count.n };
+  return { name, website: '', note: '', company_type: '', employee_count: '', referrals: '', not_interested: 0, favorite: 0, ...(row || {}), job_count: count.n };
 }
 
-const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'not_interested', 'favorite'];
+const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'referrals', 'not_interested', 'favorite'];
 
 // Canonicalize a caller-supplied value against a preset list (case-insensitive);
 // values that don't match any preset are kept as given.
@@ -696,6 +731,11 @@ export function upsertCompany(name, fields) {
   if (!name) throw new Error('Company name is required');
   if (fields.company_type) fields = { ...fields, company_type: normalizePreset(fields.company_type, COMPANY_TYPES) };
   if (fields.employee_count) fields = { ...fields, employee_count: normalizePreset(fields.employee_count, EMPLOYEE_COUNTS) };
+  // referrals: a comma-delimited string or an array of names; stored tidy.
+  if ('referrals' in fields) {
+    const raw = Array.isArray(fields.referrals) ? fields.referrals.join(',') : fields.referrals;
+    fields = { ...fields, referrals: normalizeNames(raw) };
+  }
   const updates = Object.entries(fields).filter(([k]) => COMPANY_FIELDS.includes(k));
   if (!db.prepare('SELECT 1 FROM companies WHERE name = ?').get(name)) {
     db.prepare('INSERT INTO companies (name) VALUES (?)').run(name);
@@ -706,6 +746,15 @@ export function upsertCompany(name, fields) {
     db.prepare(sql).run(...values, new Date().toISOString(), name);
   }
   return getCompany(name);
+}
+
+// Adds names to a company's referrals list (deduped case-insensitively;
+// existing entries keep their casing). Called automatically whenever a job's
+// referred_by is set, and by update_company's add_referrals.
+export function addCompanyReferrals(name, names) {
+  const current = getCompany(name).referrals;
+  const merged = normalizeNames([current, ...(names || [])].join(','));
+  return merged === current ? getCompany(name) : upsertCompany(name, { referrals: merged });
 }
 
 // ---- Users & sessions (web authentication) ----

@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, addCompanyReferrals, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 
@@ -49,7 +49,8 @@ const jobInput = {
   rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" (only stored with that status). Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else.`),
   missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only stored when rejection_reason is "Not Qualified".'),
   proposed_salary: z.number().int().nullable().optional().describe('The minimum annual salary (in dollars) the candidate asked for in their application, if the application asked. Usually recorded when the status becomes "Applied".'),
-  application_notes: z.string().optional().describe('Notes about the application process worth remembering later in an interview (what was asked, what was claimed, who was contacted, etc.).')
+  application_notes: z.string().optional().describe('Notes about the application process worth remembering later in an interview (what was asked, what was claimed, who was contacted, etc.).'),
+  referred_by: z.string().optional().describe('Who referred the candidate to this job (a person\'s name), if anyone. The name is added automatically to the company\'s referrals list (see list_companies).')
 };
 
 function ok(data) {
@@ -98,7 +99,7 @@ server.registerTool('list_jobs', {
     status: z.union([statusEnum, z.array(statusEnum).min(1)]).optional().describe('Filter by status — a single value or an array of values (jobs matching any of them are returned)'),
     company: z.string().optional().describe('Filter by company name (substring match)'),
     level: z.string().optional().describe(`Filter by seniority level (exact match), e.g. ${LEVELS.slice(0, 4).join(', ')}`),
-    q: z.string().optional().describe('Free-text search across title, company, category, fit, note, and salary'),
+    q: z.string().optional().describe('Free-text search across title, company, category, fit, notes, salary, rejection reason, missing skills, application notes, and referred_by'),
     since: z.string().optional().describe('Only jobs found on/after this date (YYYY-MM-DD)'),
     limit: z.number().int().positive().optional().describe('Max rows to return'),
     include_not_interested_companies: z.boolean().optional().describe('Jobs from companies marked "not interested" are hidden by default; pass true to include them')
@@ -148,6 +149,7 @@ server.registerTool('update_job', {
     missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only kept while rejection_reason is "Not Qualified"; cleared automatically otherwise.'),
     proposed_salary: z.number().int().nullable().optional().describe('The minimum annual salary (in dollars) the candidate asked for in their application — offer to record it when setting the status to "Applied". null clears it. Kept when the status later moves on (Interviewing, Offer, …).'),
     application_notes: z.string().optional().describe('Notes about the application process worth remembering in an interview — offer to record them when setting the status to "Applied". Replaces the existing notes; kept across later status changes.'),
+    referred_by: z.string().optional().describe('Who referred the candidate to this job (a person\'s name); empty string clears it. A new name is added automatically to the company\'s referrals list, which list_companies returns — prefer an existing name from that list when it is the same person.'),
     note: z.string().optional().describe('Replaces the existing note'),
     append_note: z.string().optional().describe('Appended to the existing note on a new line instead of replacing it'),
     title: z.string().optional(),
@@ -190,23 +192,29 @@ server.registerTool('delete_job', {
 
 server.registerTool('list_companies', {
   title: 'List companies',
-  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, note, not-interested flag, favorite flag, and job count.',
+  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, note, referrals (comma-delimited names of everyone who has referred the candidate to this company\'s jobs), not-interested flag, favorite flag, and job count.',
   inputSchema: {}
 }, async () => ok(listCompanies()));
 
 server.registerTool('update_company', {
   title: 'Update company info',
-  description: 'Save notes/info about a company, mark it "not interested", and/or flag it as a favorite. Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from favorite companies are prioritized within the list\'s sort order. Creates the company record if it does not exist yet.',
+  description: 'Save notes/info about a company, record who has referred the candidate to its jobs, mark it "not interested", and/or flag it as a favorite. Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from favorite companies are prioritized within the list\'s sort order. Creates the company record if it does not exist yet.',
   inputSchema: {
     name: z.string().describe('Company name, exactly as it appears on its jobs'),
     website: z.string().optional().describe('Company website URL'),
     company_type: z.string().optional().describe(`Company type, ideally one of: ${COMPANY_TYPES.join(', ')} — or free text for anything else`),
     employee_count: z.string().optional().describe(`Employee count range, ideally one of: ${EMPLOYEE_COUNTS.join(', ')}`),
     note: z.string().optional().describe('Replaces the existing company note'),
+    referrals: z.array(z.string()).optional().describe('Names of everyone who has referred the candidate to this company\'s jobs. REPLACES the existing list (an empty array clears it) — use add_referrals to append. Setting referred_by on a job adds to this list automatically.'),
+    add_referrals: z.array(z.string()).optional().describe('Names to append to the company\'s referrals list without touching the existing entries (duplicates are ignored case-insensitively)'),
     not_interested: z.boolean().optional().describe('true hides the company\'s jobs by default; false restores them'),
     favorite: z.boolean().optional().describe('true prioritizes the company\'s jobs within the job list\'s sort order (they win ties); false removes the priority')
   }
-}, async ({ name, ...fields }) => ok(upsertCompany(name, fields)));
+}, async ({ name, add_referrals, ...fields }) => {
+  let company = upsertCompany(name, fields);
+  if (add_referrals?.length) company = addCompanyReferrals(name, add_referrals);
+  return ok(company);
+});
 
 server.registerTool('generate_documents', {
   title: 'Generate tailored resume & cover letter',
