@@ -42,6 +42,9 @@ export const updateJob = (id, fields) =>
 export const deleteJob = (id) =>
   request(`/api/jobs/${id}`, { method: 'DELETE' });
 export const fetchCompanies = () => request('/api/companies');
+// Creates a company before any of its jobs are tracked; fields: { name, ...profile }.
+export const addCompany = (fields) =>
+  request('/api/companies', { method: 'POST', body: JSON.stringify(fields) });
 export const updateCompany = (name, fields) =>
   request(`/api/company?name=${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify(fields) });
 // Has Claude research a company on the web (slow — a minute or two). Resolves

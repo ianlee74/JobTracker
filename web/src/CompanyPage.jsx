@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref, parseNames } from './constants.js';
+import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref, parseNames, parseQuestions, tickerHref } from './constants.js';
 import { researchCompany } from './api.js';
 
 // One proposed field in the research preview: the researched value next to
@@ -15,9 +15,22 @@ function ProposedField({ label, proposed, current }) {
   );
 }
 
-// The result of "Research with Claude": proposed website / type / employee
-// count, the briefing that would be appended to the notes, and its sources.
-// Nothing is saved until Apply.
+// The fields research proposes a value for; Apply copies the non-blank ones
+// onto the company (mirrors RESEARCHED_FIELDS in server/research.js).
+const RESEARCHED_FIELDS = ['website', 'company_type', 'employee_count', 'ticker', 'gross_revenue'];
+
+// Merges proposed interview questions into the existing list (one per line),
+// skipping duplicates case-insensitively.
+function mergeQuestions(existing, proposed) {
+  const seen = new Set(parseQuestions(existing).map(q => q.toLowerCase()));
+  const extra = (proposed || []).filter(q => q && !seen.has(q.toLowerCase()));
+  return [...parseQuestions(existing), ...extra].join('\n');
+}
+
+// The result of "Research with Claude": proposed profile fields (website,
+// type, employee count, ticker, revenue), interview questions, the briefing
+// that would be appended to the notes, and its sources. Nothing is saved
+// until Apply.
 function ResearchPreview({ research, onApply, onDiscard }) {
   return (
     <div className="research-preview">
@@ -33,10 +46,20 @@ function ResearchPreview({ research, onApply, onDiscard }) {
         <ProposedField label="Website" proposed={research.website} current={research.current.website} />
         <ProposedField label="Company Type" proposed={research.company_type} current={research.current.company_type} />
         <ProposedField label="Employee Count" proposed={research.employee_count} current={research.current.employee_count} />
+        <ProposedField label="Ticker Symbol" proposed={research.ticker} current={research.current.ticker} />
+        <ProposedField label="Gross Revenue" proposed={research.gross_revenue} current={research.current.gross_revenue} />
         {research.headquarters && <ProposedField label="Headquarters" proposed={research.headquarters} />}
         {research.founded && <ProposedField label="Founded" proposed={research.founded} />}
       </div>
       <div className="research-summary">{research.summary}</div>
+      {research.interview_questions?.length > 0 && (
+        <div className="research-questions">
+          <div className="research-field-label">Interview questions to add</div>
+          <ol>
+            {research.interview_questions.map(q => <li key={q}>{q}</li>)}
+          </ol>
+        </div>
+      )}
       {research.sources.length > 0 && (
         <div className="research-sources">
           Sources:{' '}
@@ -48,7 +71,7 @@ function ResearchPreview({ research, onApply, onDiscard }) {
       <div className="research-actions">
         <button className="primary-btn" onClick={onApply}>Apply to fields</button>
         <button className="clear-btn" onClick={onDiscard}>Discard</button>
-        <span className="hint">Apply sets the fields above and appends the briefing to Notes.</span>
+        <span className="hint">Apply sets the fields above, adds the questions to Interview Questions, and appends the briefing to Notes.</span>
       </div>
     </div>
   );
@@ -66,25 +89,40 @@ function PresetSelect({ value, options, placeholder, onChange }) {
   );
 }
 
-// Info page for one company: website, free-form notes, referrals (who has
-// referred the candidate to its jobs), the favorite star, the "Not Interested"
-// flag, and the company's tracked jobs. Changes save automatically.
-export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = true }) {
+// Info page for one company: website, ticker symbol, gross revenue, free-form
+// notes, interview questions, referrals (who has referred the candidate to
+// its jobs), the favorite star, the "Not Interested" flag, and the company's
+// tracked jobs. Changes save automatically. `backLabel` names the view the
+// page was opened from.
+export default function CompanyPage({ company, jobs, onBack, backLabel = 'Back to jobs', onSave, isAdmin = true }) {
   const [website, setWebsite] = useState(company.website || '');
+  const [ticker, setTicker] = useState(company.ticker || '');
+  const [grossRevenue, setGrossRevenue] = useState(company.gross_revenue || '');
   const [note, setNote] = useState(company.note || '');
+  const [questions, setQuestions] = useState(company.interview_questions || '');
   const [referrals, setReferrals] = useState(company.referrals || '');
   const noteTimer = useRef(null);
+  const questionsTimer = useRef(null);
   const [researching, setResearching] = useState(false);
   const [research, setResearch] = useState(null); // proposal awaiting Apply / Discard
   const [researchError, setResearchError] = useState(null);
 
   useEffect(() => {
     setWebsite(company.website || '');
+    setTicker(company.ticker || '');
+    setGrossRevenue(company.gross_revenue || '');
     setNote(company.note || '');
+    setQuestions(company.interview_questions || '');
     setReferrals(company.referrals || '');
     setResearch(null);
     setResearchError(null);
   }, [company.name]);
+
+  // The server normalizes the ticker ("nasdaq: msft" → "MSFT"); show what it
+  // kept once the save comes back, unless the field is being edited.
+  useEffect(() => {
+    if (document.activeElement?.name !== 'ticker') setTicker(company.ticker || '');
+  }, [company.ticker]);
 
   // Ask Claude to research the company; the answer is shown as a proposal.
   const handleResearch = async () => {
@@ -100,18 +138,24 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
     }
   };
 
-  // Apply the proposal: researched values replace website / type / count
-  // (blank ones leave the field alone) and the briefing is appended to the
-  // notes — one save, with the local field state updated to match.
+  // Apply the proposal: researched values replace the profile fields (blank
+  // ones leave the field alone), the questions are added to the list, and
+  // the briefing is appended to the notes — one save, with the local field
+  // state updated to match.
   const applyResearch = () => {
     const fields = {};
-    for (const key of ['website', 'company_type', 'employee_count']) {
+    for (const key of RESEARCHED_FIELDS) {
       if (research[key]) fields[key] = research[key];
     }
     clearTimeout(noteTimer.current);
+    clearTimeout(questionsTimer.current);
     fields.note = note ? `${note}\n\n${research.note_section}` : research.note_section;
+    fields.interview_questions = mergeQuestions(questions, research.interview_questions);
     if (fields.website) setWebsite(fields.website);
+    if (fields.ticker) setTicker(fields.ticker);
+    if (fields.gross_revenue) setGrossRevenue(fields.gross_revenue);
     setNote(fields.note);
+    setQuestions(fields.interview_questions);
     setResearch(null);
     onSave(fields);
   };
@@ -128,7 +172,7 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
     if (tidy !== (company.referrals || '')) onSave({ referrals: tidy });
   };
 
-  useEffect(() => () => clearTimeout(noteTimer.current), []);
+  useEffect(() => () => { clearTimeout(noteTimer.current); clearTimeout(questionsTimer.current); }, []);
 
   const saveNote = (text) => {
     if (text !== (company.note || '')) onSave({ note: text });
@@ -141,11 +185,24 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
     noteTimer.current = setTimeout(() => saveNote(text), 800);
   };
 
+  // Interview questions: one per line, saved like the notes (debounced, and
+  // on blur). The server tidies the list (blank lines, list markers, dupes).
+  const saveQuestions = (text) => {
+    if (text !== (company.interview_questions || '')) onSave({ interview_questions: text });
+  };
+
+  const handleQuestionsChange = (e) => {
+    const text = e.target.value;
+    setQuestions(text);
+    clearTimeout(questionsTimer.current);
+    questionsTimer.current = setTimeout(() => saveQuestions(text), 800);
+  };
+
   const companyJobs = [...jobs].sort((a, b) => b.date_found.localeCompare(a.date_found));
 
   return (
     <div className="company-page">
-      <button className="clear-btn back-btn" onClick={onBack}>← Back to jobs</button>
+      <button className="clear-btn back-btn" onClick={onBack}>← {backLabel}</button>
 
       <div className="company-card">
         <div className="company-header">
@@ -222,6 +279,36 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
                 placeholder="https://..."
               />
             </label>
+            <div className="company-fields-row">
+              <label>
+                <span className="company-field-title">
+                  Ticker Symbol
+                  {company.ticker && (
+                    <a className="ticker-link" href={tickerHref(company.ticker)} target="_blank" rel="noopener noreferrer" title="Open on Fidelity research">
+                      {company.ticker} on Fidelity ↗
+                    </a>
+                  )}
+                </span>
+                <input
+                  name="ticker"
+                  value={ticker}
+                  onChange={e => setTicker(e.target.value)}
+                  onBlur={() => { if (ticker.trim() !== (company.ticker || '')) onSave({ ticker: ticker.trim() }); }}
+                  placeholder="MSFT (if publicly traded)"
+                  title="Stock symbol of a publicly traded company; links to Fidelity's research page"
+                />
+              </label>
+              <label>
+                Gross Revenue
+                <input
+                  value={grossRevenue}
+                  onChange={e => setGrossRevenue(e.target.value)}
+                  onBlur={() => { if (grossRevenue.trim() !== (company.gross_revenue || '')) onSave({ gross_revenue: grossRevenue.trim() }); }}
+                  placeholder="$245.1B (FY2024)"
+                  title="Current annual gross revenue, if available"
+                />
+              </label>
+            </div>
             <label>
               Referrals
               <input
@@ -242,14 +329,31 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
                 placeholder="Anything worth remembering about this company — culture, contacts, interview history..."
               />
             </label>
+            <label>
+              Interview Questions
+              <textarea
+                className="questions-textarea"
+                value={questions}
+                onChange={handleQuestionsChange}
+                onBlur={() => { clearTimeout(questionsTimer.current); saveQuestions(questions); }}
+                placeholder={'Questions to ask this company in an interview — one per line.\n✨ Research with Claude adds questions grounded in what it finds.'}
+              />
+            </label>
           </div>
         ) : (
           // Read-only company info for non-admins (they can still favorite it).
           <div className="company-fields company-fields-readonly">
-            {(company.company_type || company.employee_count) && (
+            {(company.company_type || company.employee_count || company.ticker || company.gross_revenue) && (
               <div className="company-fields-row">
                 {company.company_type && <div><strong>Type:</strong> {company.company_type}</div>}
                 {company.employee_count && <div><strong>Employees:</strong> {company.employee_count}</div>}
+                {company.ticker && (
+                  <div>
+                    <strong>Ticker:</strong>{' '}
+                    <a className="ticker-link" href={tickerHref(company.ticker)} target="_blank" rel="noopener noreferrer" title="Open on Fidelity research">{company.ticker}</a>
+                  </div>
+                )}
+                {company.gross_revenue && <div><strong>Revenue:</strong> {company.gross_revenue}</div>}
               </div>
             )}
             {company.website && (
@@ -257,6 +361,14 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
             )}
             {company.referrals && <div><strong>Referrals:</strong> {company.referrals}</div>}
             {company.note && <div className="note-readonly">{company.note}</div>}
+            {company.interview_questions && (
+              <div>
+                <strong>Interview questions:</strong>
+                <ol className="questions-list">
+                  {parseQuestions(company.interview_questions).map(q => <li key={q}>{q}</li>)}
+                </ol>
+              </div>
+            )}
           </div>
         )}
       </div>

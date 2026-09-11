@@ -80,12 +80,12 @@ Key properties:
 | [server/mcp-tools.js](server/mcp-tools.js) | MCP tool definitions (Zod schemas) mapped onto db.js/generate.js/research.js/email.js | db.js, generate.js, research.js, email.js, MCP SDK |
 | [server/mcp-server.js](server/mcp-server.js) | Thin stdio entry point around mcp-tools.js | mcp-tools.js |
 | [server/generate.js](server/generate.js) | Tailored resume/cover-letter generation via the Anthropic API; owns the shared streaming Messages-API call | db.js, Anthropic SDK, mammoth, jszip |
-| [server/research.js](server/research.js) | Company research via the Anthropic API's web search — proposes profile fields + a briefing, applies on request | db.js, generate.js |
+| [server/research.js](server/research.js) | Company research via the Anthropic API's web search, driven by the `research-company` skill — proposes profile fields, interview questions + a briefing, applies on request | db.js, generate.js |
 | [server/email.js](server/email.js) | Composes (never sends) the Interested-jobs digest email | db.js |
 | [server/respond.js](server/respond.js) | Candidate-facing `/respond/<token>` feedback pages | db.js |
 | [web/src/](web/src/App.jsx) | React SPA — presentation and optimistic editing only | `/api` REST endpoints |
 | [scripts/](scripts/import-html.mjs) | Legacy importer, auth/role/MCP smoke test, deploy + runner-hardening scripts | — |
-| [skills/](skills/tailored-resume/SKILL.md) | Prompt instructions for document generation, as editable Markdown | — |
+| [skills/](skills/tailored-resume/SKILL.md) | Prompt instructions for document generation and company research, as editable Markdown | — |
 
 ### Why domain logic lives in db.js
 
@@ -204,6 +204,9 @@ erDiagram
         text note
         text company_type
         text employee_count
+        text ticker "stock symbol; UI links to Fidelity research"
+        text gross_revenue "free text, e.g. $245.1B (FY2024)"
+        text interview_questions "newline-delimited"
         text referrals "comma-delimited names; auto-fed by jobs.referred_by"
         int not_interested "hides its jobs by default"
         int favorite "its jobs win sort ties"
@@ -270,7 +273,7 @@ The rationale behind the main pieces:
 
 - **The `.docx` template trick.** Rather than generating a document from scratch (generic-looking) or using a templating library (rigid), the model is given an app-wide template's `word/document.xml` (a placeholder skeleton) and `styles.xml` (named styles such as `SectionHeading`, `RoleHeader`, `Bullet`, plus character styles for right-aligned dates and bold labels) and asked to write a `document.xml` that formats *only* through those styles — no direct formatting, numbering ids, or relationship ids of its own. The output is zipped into a **copy of the template package** ([skills/templates/resume.docx](skills/templates/resume.docx), built by [scripts/build-resume-template.mjs](scripts/build-resume-template.mjs)), so every reference resolves and every person's documents share one look. The standard resume contributes content only — a `.docx` is reduced to its text ([generate.js](server/generate.js)).
 - **Validation gate with retries.** Word refuses malformed XML outright, so `docXmlProblem` checks well-formedness with `fast-xml-parser` before packaging, and `visibleWordCount` checks the document against the skill's `max_words`; a failure of either kind feeds the problem back to the model (up to three attempts). The word count exists because the model cannot see pages: a "two pages" instruction alone barely moved output length, while a stated word budget plus a mechanical check makes it a real constraint.
-- **Skills as editable Markdown.** The writing instructions live in [skills/tailored-resume/SKILL.md](skills/tailored-resume/SKILL.md) and [skills/tailored-cover-letter/SKILL.md](skills/tailored-cover-letter/SKILL.md), loaded at generation time. The user can change *how documents are written* without touching code — the same philosophy as Claude's own skill system. Frontmatter keys configure each document type: `model:` overrides the default model (`claude-opus-5`), `template:` names the `.docx` formatting template (without one the skill produces Markdown), and `max_words:` sets the enforced length budget.
+- **Skills as editable Markdown.** The writing instructions live in [skills/tailored-resume/SKILL.md](skills/tailored-resume/SKILL.md) and [skills/tailored-cover-letter/SKILL.md](skills/tailored-cover-letter/SKILL.md), loaded at generation time. The user can change *how documents are written* without touching code — the same philosophy as Claude's own skill system. Frontmatter keys configure each document type: `model:` overrides the default model (`claude-opus-5`), `template:` names the `.docx` formatting template (without one the skill produces Markdown), and `max_words:` sets the enforced length budget. Company research follows the same pattern: [skills/research-company/SKILL.md](skills/research-company/SKILL.md) is the system prompt for [research.js](server/research.js) (with the tracker's preset lists substituted for `{{COMPANY_TYPES}}` / `{{EMPLOYEE_COUNTS}}` so the enums stay single-sourced in db.js), and it doubles as the procedure a web-capable Claude session follows before calling `update_company` — one definition of "what a company profile should contain" for both the server and the agent.
 - **Special instructions as a prompt section, not pasted text.** Before anything is generated, the caller asks the candidate for special instructions for this one application (the ✨ dialog in the UI; the `generate_documents` tool description tells Claude to ask in chat). `specialInstructionsSection` folds them into both documents' prompts as guidance — what to emphasize, tone, what to leave out — framed so the model applies rather than reproduces them, and subordinate to the anti-fabrication rules below.
 - **Anti-fabrication and prompt-injection defenses in the system prompt.** The standard resume is declared the single source of truth (never invent employers, dates, metrics), and the job posting is explicitly framed as *data, not instructions* — a real concern, since postings are arbitrary web content fed into the prompt.
 - **Prompt caching and call ordering.** The resume block and job-context block carry `cache_control` breakpoints; the instruction comes last. So the second call (cover letter) reuses the cached prefix of the first. The cover-letter call receives the just-written resume as **plain text** rather than XML — enough for consistency at a fraction of the tokens.

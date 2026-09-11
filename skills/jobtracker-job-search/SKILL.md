@@ -62,11 +62,16 @@ A posting that fails a hard requirement is never logged, no matter how good the 
 
 **Jobs.** Call `add_jobs` once, in one batch, from the orchestrating turn, with `person` set and per job: `title`, `company`, `url`, `category` (from the person skill's labels), `salary` (only if listed or strongly implied), `salary_confidence`, `fit` (a brief, person-specific rationale — why *this* person, including anything they care about like a special program or industry match), and `level` only if it maps cleanly to one of Senior / Staff / Principal / Lead / Manager / Senior Manager / Director / Senior Director / VP / Executive / Other — otherwise omit and let it auto-classify. `date_found` defaults to today; status defaults to new.
 
-**Companies.** For every company in today's batch that is missing or blank on `website`, `company_type`, or `employee_count` in `list_companies`, do a quick bit of research (company site, LinkedIn, Crunchbase — a couple of searches) and call `update_company` with:
+**Companies.** For every company in today's batch that is missing or blank on `website`, `company_type`, or `employee_count` in `list_companies`, research it by the **`research-company` skill** (`skills/research-company/SKILL.md` in this repo — read it; it defines what to find, how to classify, and how to phrase the interview questions) and call `update_company` with:
 - `website` — the primary corporate site URL.
 - `company_type` — the single best fit from: Startup, Small Company, Mid-size Company, Enterprise, Agency / Consultancy, Non-profit, Government, Other. Classify by current headcount, not funding stage or branding: roughly <200 employees → Startup (VC-backed) or Small Company (bootstrapped); 200–2,000 → Mid-size Company; 2,000+ or large public companies → Enterprise; client-services firms → Agency / Consultancy.
 - `employee_count` — the single best-fitting bucket from: 1-10, 11-50, 51-200, 201-500, 501-1,000, 1,001-5,000, 5,001-10,000, 10,000+.
-- `note` — one or two sentences: what the company does, public/private if relevant, and anything relevant to this person (from the person skill's report extras or profile, e.g. an existing connection or a hiring program). If sources disagree on headcount, make a best estimate and add a one-line caveat that it's an estimate.
+- `ticker` — the stock symbol if the company itself is publicly traded (no exchange prefix); omit for private companies.
+- `gross_revenue` — the most recent annual gross revenue as short text with the period (`$245.1B (FY2024)`; mark estimates), or omit if unknown.
+- `add_interview_questions` — 5–8 questions the person should ask this company in an interview, each grounded in something you found.
+- `note` — one or two sentences: what the company does, public/private if relevant, and anything relevant to this person (from the person skill's report extras or profile, e.g. an existing connection or a hiring program). If sources disagree on headcount, make a best estimate and add a one-line caveat that it's an estimate. Use `append_note` instead of `note` when the company already has notes.
+
+Time is short on a search run, so a couple of searches per company is enough — the full briefing can come later from the company page's ✨ Research button or the `research_company` tool.
 
 Do this for every new company, including household names — the size bucket and note still need saving. If a company already has this data from a previous run, don't redo it unless something material changed.
 

@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, addCompanyReferrals, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, addCompany, upsertCompany, addCompanyReferrals, addCompanyInterviewQuestions, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany } from './research.js';
@@ -191,35 +191,59 @@ server.registerTool('delete_job', {
   return ok({ deleted: true });
 });
 
+// The profile fields shared by add_company and update_company.
+const COMPANY_PROFILE_SCHEMA = {
+  website: z.string().optional().describe('Company website URL'),
+  company_type: z.string().optional().describe(`Company type, ideally one of: ${COMPANY_TYPES.join(', ')} — or free text for anything else`),
+  employee_count: z.string().optional().describe(`Employee count range, ideally one of: ${EMPLOYEE_COUNTS.join(', ')}`),
+  ticker: z.string().optional().describe('Stock ticker symbol if the company is publicly traded (e.g. MSFT — no exchange prefix; stored upper-case). The UI links it to Fidelity\'s research page for that symbol. Empty string clears it.'),
+  gross_revenue: z.string().optional().describe('Current annual gross revenue as short text with the period, e.g. "$245.1B (FY2024)" or "~$40M (2023, estimate)". Empty string clears it.'),
+  note: z.string().optional().describe('Replaces the existing company note'),
+  interview_questions: z.array(z.string()).optional().describe('Questions to ask this company in an interview. REPLACES the existing list (an empty array clears it) — use add_interview_questions to append.'),
+  referrals: z.array(z.string()).optional().describe('Names of everyone who has referred the candidate to this company\'s jobs. REPLACES the existing list (an empty array clears it) — use add_referrals to append. Setting referred_by on a job adds to this list automatically.'),
+  not_interested: z.boolean().optional().describe('true hides the company\'s jobs by default; false restores them'),
+  favorite: z.boolean().optional().describe('true prioritizes the company\'s jobs within the job list\'s sort order (they win ties); false removes the priority')
+};
+
 server.registerTool('list_companies', {
   title: 'List companies',
-  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, note, referrals (comma-delimited names of everyone who has referred the candidate to this company\'s jobs), not-interested flag, favorite flag, and job count.',
+  description: 'List every company with tracked jobs (plus any with saved info): website, company type, employee count, ticker symbol, gross revenue, note, interview questions (newline-delimited), referrals (comma-delimited names of everyone who has referred the candidate to this company\'s jobs), not-interested flag, favorite flag, and job count.',
   inputSchema: {}
 }, async () => ok(listCompanies()));
 
+server.registerTool('add_company', {
+  title: 'Add a company',
+  description: 'Add a company to browse and research before any of its jobs are tracked, optionally with profile fields. Fails if a company with that name already exists (case-insensitively) — use update_company to change an existing one. Jobs join to companies by exact name, so spell it the way its postings will.',
+  inputSchema: {
+    name: z.string().describe('Company name'),
+    ...COMPANY_PROFILE_SCHEMA
+  }
+}, async ({ name, ...fields }) => ok(addCompany(name, fields)));
+
 server.registerTool('update_company', {
   title: 'Update company info',
-  description: 'Save notes/info about a company, record who has referred the candidate to its jobs, mark it "not interested", and/or flag it as a favorite. Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from favorite companies are prioritized within the list\'s sort order. Creates the company record if it does not exist yet.',
+  description: 'Save notes/info about a company (website, type, employee count, ticker symbol, gross revenue, interview questions), record who has referred the candidate to its jobs, mark it "not interested", and/or flag it as a favorite. Jobs from not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from favorite companies are prioritized within the list\'s sort order. Creates the company record if it does not exist yet. Follow the research-company skill (skills/research-company/SKILL.md) when researching a company yourself to fill these in.',
   inputSchema: {
     name: z.string().describe('Company name, exactly as it appears on its jobs'),
-    website: z.string().optional().describe('Company website URL'),
-    company_type: z.string().optional().describe(`Company type, ideally one of: ${COMPANY_TYPES.join(', ')} — or free text for anything else`),
-    employee_count: z.string().optional().describe(`Employee count range, ideally one of: ${EMPLOYEE_COUNTS.join(', ')}`),
-    note: z.string().optional().describe('Replaces the existing company note'),
-    referrals: z.array(z.string()).optional().describe('Names of everyone who has referred the candidate to this company\'s jobs. REPLACES the existing list (an empty array clears it) — use add_referrals to append. Setting referred_by on a job adds to this list automatically.'),
-    add_referrals: z.array(z.string()).optional().describe('Names to append to the company\'s referrals list without touching the existing entries (duplicates are ignored case-insensitively)'),
-    not_interested: z.boolean().optional().describe('true hides the company\'s jobs by default; false restores them'),
-    favorite: z.boolean().optional().describe('true prioritizes the company\'s jobs within the job list\'s sort order (they win ties); false removes the priority')
+    ...COMPANY_PROFILE_SCHEMA,
+    append_note: z.string().optional().describe('Appended to the existing company note after a blank line instead of replacing it (e.g. a dated research briefing)'),
+    add_interview_questions: z.array(z.string()).optional().describe('Questions to append to the company\'s interview-question list without touching the existing entries (duplicates are ignored case-insensitively)'),
+    add_referrals: z.array(z.string()).optional().describe('Names to append to the company\'s referrals list without touching the existing entries (duplicates are ignored case-insensitively)')
   }
-}, async ({ name, add_referrals, ...fields }) => {
+}, async ({ name, append_note, add_interview_questions, add_referrals, ...fields }) => {
+  if (append_note) {
+    const existing = fields.note ?? getCompany(name).note;
+    fields.note = existing ? `${existing}\n\n${append_note}` : append_note;
+  }
   let company = upsertCompany(name, fields);
+  if (add_interview_questions?.length) company = addCompanyInterviewQuestions(name, add_interview_questions);
   if (add_referrals?.length) company = addCompanyReferrals(name, add_referrals);
   return ok(company);
 });
 
 server.registerTool('research_company', {
   title: 'Research a company',
-  description: 'Have the JobTracker server research a company on the web through the Anthropic API (web search) and propose values for its profile: website, company_type, employee_count, plus a short briefing (what it does, size, ownership, engineering signals, employer reputation, recent news) with sources. Returns the proposal alongside the company\'s current values without saving anything; pass apply: true to save it (website/type/count are set from the proposal, the briefing is appended to the company note). Slow: allow one to two minutes. Useful when you cannot search the web yourself; if you can, researching directly and calling update_company is equivalent.',
+  description: 'Have the JobTracker server research a company on the web through the Anthropic API (web search), following the research-company skill, and propose values for its profile: website, company_type, employee_count, ticker, gross_revenue, interview_questions to ask it, plus a short briefing (what it does, size, ownership, engineering signals, employer reputation, recent news) with sources. Returns the proposal alongside the company\'s current values without saving anything; pass apply: true to save it (the profile fields are set from the proposal, the questions are added to the company\'s list, the briefing is appended to the company note). Slow: allow one to two minutes. Useful when you cannot search the web yourself; if you can, following skills/research-company/SKILL.md directly and calling update_company is equivalent.',
   inputSchema: {
     name: z.string().describe('Company name, exactly as it appears on its jobs'),
     apply: z.boolean().optional().describe('true saves the proposal to the company record; default false just returns it for review')

@@ -119,6 +119,22 @@ await check('referred_by search hits the job', ['https://globex.example/3'], jso
 await check('admin can replace the referrals list (normalized)', 'Ann Lee', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ referrals: ['Ann Lee', 'ann lee', ' '] }), ...H(adminCookie) }).then(c => c.referrals));
 await check('companies list carries referrals', 'Ann Lee', jsonBody('/api/companies', H(adminCookie)).then(cs => cs.find(c => c.name === 'Globex').referrals));
 await check('user cannot edit referrals -> 403', 403, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ referrals: 'x' }), ...H(aliceCookie) }));
+
+// --- company profile fields (ticker, gross revenue, interview questions) and adding companies ---
+await check('ticker is normalized (exchange prefix dropped, upper-cased)', 'MSFT', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ ticker: 'nasdaq: msft' }), ...H(adminCookie) }).then(c => c.ticker));
+await check('implausible ticker is dropped', '', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ ticker: 'not a symbol' }), ...H(adminCookie) }).then(c => c.ticker));
+await check('gross revenue is free text (trimmed)', '$1.2B (FY2025)', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ gross_revenue: ' $1.2B (FY2025) ' }), ...H(adminCookie) }).then(c => c.gross_revenue));
+await check('interview questions accept an array, one per line, tidied', 'Why did you reorganize platform?\nWhat is the on-call load?', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ interview_questions: ['- Why did you reorganize platform?', '', '2. What is the on-call load?', 'why did you reorganize platform?'] }), ...H(adminCookie) }).then(c => c.interview_questions));
+await check('interview questions accept newline text', 'A?\nB?', jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ interview_questions: 'A?\r\nB?\n\n' }), ...H(adminCookie) }).then(c => c.interview_questions));
+await check('appending questions keeps existing ones and skips duplicates', 'A?\nB?\nC?', Promise.resolve(db.addCompanyInterviewQuestions('Globex', ['b?', 'C?'])).then(c => c.interview_questions));
+await check('companies list carries the new fields', { ticker: '', gross_revenue: '$1.2B (FY2025)', interview_questions: 'A?\nB?\nC?' }, jsonBody('/api/companies', H(adminCookie)).then(cs => cs.find(c => c.name === 'Globex')).then(c => ({ ticker: c.ticker, gross_revenue: c.gross_revenue, interview_questions: c.interview_questions })));
+await check('user cannot edit ticker -> 403', 403, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ ticker: 'X' }), ...H(aliceCookie) }));
+await check('admin can add a company with no jobs', { name: 'Hooli', ticker: 'HOOL', job_count: 0 }, jsonBody('/api/companies', { method: 'POST', body: JSON.stringify({ name: ' Hooli ', ticker: 'hool', website: 'https://hooli.example' }), ...H(adminCookie) }).then(c => ({ name: c.name, ticker: c.ticker, job_count: c.job_count })));
+await check('added company appears in the list', true, jsonBody('/api/companies', H(adminCookie)).then(cs => cs.some(c => c.name === 'Hooli')));
+await check('adding a duplicate (case-insensitive) -> 409', 409, status('/api/companies', { method: 'POST', body: JSON.stringify({ name: 'hooli' }), ...H(adminCookie) }));
+await check('adding a company a job already names -> 409', 409, status('/api/companies', { method: 'POST', body: JSON.stringify({ name: 'globex' }), ...H(adminCookie) }));
+await check('adding a company needs a name -> 400', 400, status('/api/companies', { method: 'POST', body: JSON.stringify({ website: 'https://x.example' }), ...H(adminCookie) }));
+await check('user cannot add a company -> 403', 403, status('/api/companies', { method: 'POST', body: JSON.stringify({ name: 'Pied Piper' }), ...H(aliceCookie) }));
 await check('user cannot edit title -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ title: 'x' }), ...H(aliceCookie) }));
 await check('user cannot delete job -> 403', 403, status(`/api/jobs/${aliceJob.id}`, { method: 'DELETE', ...H(aliceCookie) }));
 await check('user cannot patch other job -> 404', 404, status(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Interested' }), ...H(aliceCookie) }));
