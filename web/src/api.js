@@ -44,6 +44,11 @@ export const deleteJob = (id) =>
 export const fetchCompanies = () => request('/api/companies');
 export const updateCompany = (name, fields) =>
   request(`/api/company?name=${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify(fields) });
+// Has Claude research a company on the web (slow — a minute or two). Resolves
+// to proposed field values + a briefing; nothing is saved until the caller
+// applies it with updateCompany.
+export const researchCompany = (name) =>
+  request(`/api/company/research?name=${encodeURIComponent(name)}`, { method: 'POST', body: '{}' });
 // Stores a copy of a dropped File on the server machine (local-only app);
 // resolves to { path, url } of the stored copy.
 export const uploadPosting = (file) =>

@@ -75,11 +75,12 @@ Key properties:
 | Module | Role | Depends on |
 |---|---|---|
 | [server/db.js](server/db.js) | Schema, migrations, and **all domain logic** (validation, salary parsing, level classification, dedup rules, users/sessions, feedback tokens) | `node:sqlite`, `node:crypto` |
-| [server/http-server.js](server/http-server.js) | REST API with per-route role enforcement, static files, `/mcp`, request routing | db.js, generate.js, auth.js, email.js, respond.js, mcp-tools.js |
+| [server/http-server.js](server/http-server.js) | REST API with per-route role enforcement, static files, `/mcp`, request routing | db.js, generate.js, research.js, auth.js, email.js, respond.js, mcp-tools.js |
 | [server/auth.js](server/auth.js) | Google ID-token verification, session cookies, MCP bearer-token check | db.js, `node:crypto` |
-| [server/mcp-tools.js](server/mcp-tools.js) | MCP tool definitions (Zod schemas) mapped onto db.js/generate.js/email.js | db.js, generate.js, email.js, MCP SDK |
+| [server/mcp-tools.js](server/mcp-tools.js) | MCP tool definitions (Zod schemas) mapped onto db.js/generate.js/research.js/email.js | db.js, generate.js, research.js, email.js, MCP SDK |
 | [server/mcp-server.js](server/mcp-server.js) | Thin stdio entry point around mcp-tools.js | mcp-tools.js |
-| [server/generate.js](server/generate.js) | Tailored resume/cover-letter generation via the Anthropic API | db.js, Anthropic SDK, mammoth, jszip |
+| [server/generate.js](server/generate.js) | Tailored resume/cover-letter generation via the Anthropic API; owns the shared streaming Messages-API call | db.js, Anthropic SDK, mammoth, jszip |
+| [server/research.js](server/research.js) | Company research via the Anthropic API's web search — proposes profile fields + a briefing, applies on request | db.js, generate.js |
 | [server/email.js](server/email.js) | Composes (never sends) the Interested-jobs digest email | db.js |
 | [server/respond.js](server/respond.js) | Candidate-facing `/respond/<token>` feedback pages | db.js |
 | [web/src/](web/src/App.jsx) | React SPA — presentation and optimistic editing only | `/api` REST endpoints |
