@@ -183,15 +183,15 @@ db.exec(`
   }
 }
 
-// Migration: companies table — per-company notes/info and a "not interested"
-// flag (jobs from flagged companies are hidden by default).
+// Migration: companies table — per-company notes/info. (Its original global
+// "not interested" flag, and the later "favorite" one, moved to the per-person
+// company_flags table below.)
 db.exec(`
   CREATE TABLE IF NOT EXISTS companies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     website TEXT DEFAULT '',
     note TEXT DEFAULT '',
-    not_interested INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   );
@@ -205,15 +205,6 @@ db.exec(`
   }
   if (!cols.includes('employee_count')) {
     db.exec("ALTER TABLE companies ADD COLUMN employee_count TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// Migration: add a "favorite" flag to companies (jobs from favorite companies
-// are prioritized within the job list's sort order).
-{
-  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
-  if (!cols.includes('favorite')) {
-    db.exec('ALTER TABLE companies ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0');
   }
 }
 
@@ -445,6 +436,39 @@ if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
   }
 }
 
+// Migration: the favorite and not-interested flags are per person, not per
+// company — Gabe may pass on an airline Ian is keen on. They live in
+// company_flags, one row per (company, person); a company's profile stays
+// shared. Flags that were global are handed to every person who tracks a job
+// at that company (the people who could have set them); a flagged company
+// nobody tracks keeps its flags for everyone. The old columns are dropped so
+// nothing can read the stale global values by accident.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS company_flags (
+    company TEXT NOT NULL,
+    person_id INTEGER NOT NULL,
+    favorite INTEGER NOT NULL DEFAULT 0,
+    not_interested INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (company, person_id)
+  );
+`);
+{
+  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  const old = ['favorite', 'not_interested'].filter(c => cols.includes(c));
+  if (old.length) {
+    const flagged = db.prepare(`SELECT name, ${old.join(', ')} FROM companies WHERE ${old.map(c => `${c} = 1`).join(' OR ')}`).all();
+    const everyone = db.prepare('SELECT id FROM people').all().map(p => p.id);
+    const trackers = db.prepare('SELECT DISTINCT person_id FROM jobs WHERE company = ?');
+    const insert = db.prepare('INSERT OR REPLACE INTO company_flags (company, person_id, favorite, not_interested) VALUES (?, ?, ?, ?)');
+    for (const row of flagged) {
+      const owners = trackers.all(row.name).map(r => r.person_id);
+      for (const personId of owners.length ? owners : everyone) insert.run(row.name, personId, row.favorite ?? 0, row.not_interested ?? 0);
+    }
+    for (const col of old) db.exec(`ALTER TABLE companies DROP COLUMN ${col}`);
+  }
+}
+
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
 // numeric string (with $ and commas); anything else is an error, and an empty
 // value clears it.
@@ -520,6 +544,7 @@ export function deletePerson(id) {
     throw new Error('Cannot delete the last person');
   }
   db.prepare('DELETE FROM people WHERE id = ?').run(person.id);
+  db.prepare('DELETE FROM company_flags WHERE person_id = ?').run(person.id);
   return true;
 }
 
@@ -547,8 +572,9 @@ export function deleteJobDocuments(jobId, kind) {
 export function listJobs({ personId, status, company, level, q, since, limit, excludeNotInterestedCompanies } = {}) {
   const where = [];
   const params = [];
+  // Flags are per person, so each job is judged against its own owner's flags.
   if (excludeNotInterestedCompanies) {
-    where.push('company NOT IN (SELECT name FROM companies WHERE not_interested = 1)');
+    where.push('NOT EXISTS (SELECT 1 FROM company_flags f WHERE f.company = jobs.company AND f.person_id = jobs.person_id AND f.not_interested = 1)');
   }
   if (personId != null) { where.push('person_id = ?'); params.push(personId); }
   // status accepts one value or an array (any-of match).
@@ -570,8 +596,8 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
     (SELECT name FROM people WHERE people.id = jobs.person_id) AS person_name
     FROM jobs`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
-  // Newest first; favorite companies win ties within a date.
-  sql += ' ORDER BY date_found DESC, (company IN (SELECT name FROM companies WHERE favorite = 1)) DESC, company ASC, id ASC';
+  // Newest first; the owner's favorite companies win ties within a date.
+  sql += ' ORDER BY date_found DESC, EXISTS (SELECT 1 FROM company_flags f WHERE f.company = jobs.company AND f.person_id = jobs.person_id AND f.favorite = 1) DESC, company ASC, id ASC';
   if (limit) { sql += ' LIMIT ?'; params.push(limit); }
   return db.prepare(sql).all(...params);
 }
@@ -743,31 +769,49 @@ export function deleteJob({ id, url, personId }) {
   return true;
 }
 
-// The shape of a company with no saved row yet: every profile field blank.
+// The shape of a company with no saved row yet: every profile field blank and,
+// for whichever person is asking, neither flag set.
 const COMPANY_DEFAULTS = { website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0, favorite: 0 };
 
+// The per-person flags (favorite, not_interested); everything else on a
+// company is its shared profile.
+export const COMPANY_FLAGS = ['favorite', 'not_interested'];
+
+// One person's flags by company name. Without a person there are none — a
+// company then reads as neither favorite nor not-interested.
+function companyFlagsFor(personId) {
+  if (personId == null) return new Map();
+  const rows = db.prepare('SELECT company, favorite, not_interested FROM company_flags WHERE person_id = ?').all(personId);
+  return new Map(rows.map(r => [r.company, { favorite: r.favorite, not_interested: r.not_interested }]));
+}
+
 // Every company referenced by a job (with defaults when it has no saved row)
-// plus any saved companies whose jobs are gone.
-export function listCompanies() {
+// plus any saved companies whose jobs are gone. The favorite / not_interested
+// flags are the given person's.
+export function listCompanies({ personId } = {}) {
   const saved = db.prepare('SELECT * FROM companies').all();
   const byName = new Map(saved.map(r => [r.name, r]));
+  const flags = companyFlagsFor(personId);
   const counts = db.prepare('SELECT company, COUNT(*) AS n FROM jobs GROUP BY company').all();
   const result = [];
   for (const { company, n } of counts) {
-    result.push({ name: company, ...COMPANY_DEFAULTS, ...(byName.get(company) || {}), job_count: n });
+    result.push({ name: company, ...COMPANY_DEFAULTS, ...(byName.get(company) || {}), ...(flags.get(company) || {}), job_count: n });
     byName.delete(company);
   }
-  for (const row of byName.values()) result.push({ ...row, job_count: 0 });
+  for (const row of byName.values()) result.push({ ...COMPANY_DEFAULTS, ...row, ...(flags.get(row.name) || {}), job_count: 0 });
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function getCompany(name) {
+export function getCompany(name, { personId } = {}) {
   const row = db.prepare('SELECT * FROM companies WHERE name = ?').get(name);
   const count = db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company = ?').get(name);
-  return { name, ...COMPANY_DEFAULTS, ...(row || {}), job_count: count.n };
+  const flags = personId == null
+    ? null
+    : db.prepare('SELECT favorite, not_interested FROM company_flags WHERE company = ? AND person_id = ?').get(name, personId);
+  return { name, ...COMPANY_DEFAULTS, ...(row || {}), ...(flags || {}), job_count: count.n };
 }
 
-const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'ticker', 'gross_revenue', 'interview_questions', 'referrals', 'not_interested', 'favorite'];
+const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'ticker', 'gross_revenue', 'interview_questions', 'referrals'];
 
 // Canonicalize a caller-supplied value against a preset list (case-insensitive);
 // values that don't match any preset are kept as given.
@@ -777,9 +821,15 @@ function normalizePreset(value, presets) {
   return exact ?? String(value).trim();
 }
 
-export function upsertCompany(name, fields) {
+// Saves a company's shared profile fields and, when favorite / not_interested
+// are among the fields, that person's flags — which need a person to belong to.
+export function upsertCompany(name, fields, { personId } = {}) {
   name = (name || '').trim();
   if (!name) throw new Error('Company name is required');
+  const flags = Object.fromEntries(Object.entries(fields).filter(([k]) => COMPANY_FLAGS.includes(k)));
+  if (Object.keys(flags).length && personId == null) {
+    throw new Error('favorite and not_interested are per person — specify the person they apply to');
+  }
   if (fields.company_type) fields = { ...fields, company_type: normalizePreset(fields.company_type, COMPANY_TYPES) };
   if (fields.employee_count) fields = { ...fields, employee_count: normalizePreset(fields.employee_count, EMPLOYEE_COUNTS) };
   // referrals: a comma-delimited string or an array of names; stored tidy.
@@ -797,10 +847,30 @@ export function upsertCompany(name, fields) {
   }
   if (updates.length) {
     const sql = `UPDATE companies SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE name = ?`;
-    const values = updates.map(([, v]) => (typeof v === 'boolean' ? (v ? 1 : 0) : v));
-    db.prepare(sql).run(...values, new Date().toISOString(), name);
+    db.prepare(sql).run(...updates.map(([, v]) => v), new Date().toISOString(), name);
   }
-  return getCompany(name);
+  if (Object.keys(flags).length) setCompanyFlags(name, personId, flags);
+  return getCompany(name, { personId });
+}
+
+// Sets one person's favorite / not_interested flags on a company (either or
+// both; booleans or 0/1). A row with neither flag set is removed, so the table
+// only holds actual preferences.
+export function setCompanyFlags(name, personId, flags) {
+  name = (name || '').trim();
+  if (!name) throw new Error('Company name is required');
+  if (personId == null || !getPerson(personId)) throw new Error(`Unknown person id "${personId}"`);
+  const updates = Object.entries(flags).filter(([k]) => COMPANY_FLAGS.includes(k)).map(([k, v]) => [k, v ? 1 : 0]);
+  if (updates.length) {
+    if (!db.prepare('SELECT 1 FROM companies WHERE name = ?').get(name)) {
+      db.prepare('INSERT INTO companies (name) VALUES (?)').run(name);
+    }
+    db.prepare('INSERT OR IGNORE INTO company_flags (company, person_id) VALUES (?, ?)').run(name, personId);
+    db.prepare(`UPDATE company_flags SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE company = ? AND person_id = ?`)
+      .run(...updates.map(([, v]) => v), new Date().toISOString(), name, personId);
+    db.prepare('DELETE FROM company_flags WHERE company = ? AND person_id = ? AND favorite = 0 AND not_interested = 0').run(name, personId);
+  }
+  return getCompany(name, { personId });
 }
 
 // Adds names to a company's referrals list (deduped case-insensitively;
@@ -825,12 +895,12 @@ export function addCompanyInterviewQuestions(name, questions) {
 // be browsed and researched before any posting mentions it. Names are matched
 // case-insensitively against saved rows and job companies, and the existing
 // spelling is reported, since jobs join to companies by exact name.
-export function addCompany(name, fields = {}) {
+export function addCompany(name, fields = {}, { personId } = {}) {
   name = (name || '').trim();
   if (!name) throw new Error('Company name is required');
   const existing = listCompanies().find(c => c.name.toLowerCase() === name.toLowerCase());
   if (existing) throw new Error(`Company "${existing.name}" already exists`);
-  return upsertCompany(name, fields);
+  return upsertCompany(name, fields, { personId });
 }
 
 // ---- Users & sessions (web authentication) ----

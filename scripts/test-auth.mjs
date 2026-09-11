@@ -141,6 +141,22 @@ await check('user cannot patch other job -> 404', 404, status(`/api/jobs/${defau
 await check('user add job forced to self', alice.id, jsonBody('/api/jobs', { method: 'POST', body: JSON.stringify({ title: 'Sneaky', company: 'Evil', url: 'https://evil.example/3', person_id: defaultPerson.id }), ...H(aliceCookie) }).then(r => r.jobs[0].person_id));
 await check('user can favorite company', 200, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ favorite: true }), ...H(aliceCookie) }));
 await check('user cannot edit company note -> 403', 403, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ note: 'x' }), ...H(aliceCookie) }));
+
+// --- company flags are per person ---
+await check('favorite is the user\'s own', 1, jsonBody(`/api/company?name=Globex&person=${alice.id}`, H(adminCookie)).then(c => c.favorite));
+await check('favorite does not show for another person', 0, jsonBody(`/api/company?name=Globex&person=${defaultPerson.id}`, H(adminCookie)).then(c => c.favorite));
+await check('user\'s companies list carries own flags', 1, jsonBody('/api/companies', H(aliceCookie)).then(cs => cs.find(c => c.name === 'Globex').favorite));
+await check('admin listing another person sees no flag', 0, jsonBody(`/api/companies?person=${defaultPerson.id}`, H(adminCookie)).then(cs => cs.find(c => c.name === 'Globex').favorite));
+await check('admin listing without a person sees no flags', 0, jsonBody('/api/companies', H(adminCookie)).then(cs => cs.find(c => c.name === 'Globex').favorite));
+await check('admin flagging without a person -> 400', 400, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ favorite: true }), ...H(adminCookie) }));
+await check('admin flagging an unknown person -> 400', 400, status('/api/company?name=Globex&person=999', { method: 'PATCH', body: JSON.stringify({ favorite: true }), ...H(adminCookie) }));
+await check('admin flags for a chosen person', 1, jsonBody(`/api/company?name=Acme&person=${defaultPerson.id}`, { method: 'PATCH', body: JSON.stringify({ favorite: true }), ...H(adminCookie) }).then(c => c.favorite));
+await check('user can mark a company not interested', 1, jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ not_interested: true }), ...H(aliceCookie) }).then(c => c.not_interested));
+await check('not-interested hides that person\'s jobs at the company', false, Promise.resolve(db.listJobs({ personId: alice.id, excludeNotInterestedCompanies: true }).some(j => j.company === 'Globex')));
+await check('not-interested keeps the jobs tracked', true, Promise.resolve(db.listJobs({ personId: alice.id }).some(j => j.company === 'Globex')));
+await check('another person\'s job at the company is unaffected', true, Promise.resolve(db.listJobs({ excludeNotInterestedCompanies: true }).some(j => j.company === 'Acme' && j.person_id === defaultPerson.id)));
+await check('clearing both flags leaves the company unflagged', { favorite: 0, not_interested: 0 }, jsonBody('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ favorite: false, not_interested: false }), ...H(aliceCookie) }).then(c => ({ favorite: c.favorite, not_interested: c.not_interested })));
+await check('profile fields survive flag changes', '$1.2B (FY2025)', jsonBody('/api/company?name=Globex', H(aliceCookie)).then(c => c.gross_revenue));
 await check('user cannot research company -> 403', 403, status('/api/company/research?name=Globex', { method: 'POST', body: '{}', ...H(aliceCookie) }));
 await check('research needs a company name -> 400', 400, status('/api/company/research', { method: 'POST', body: '{}', ...H(adminCookie) }));
 await check('user cannot browse -> 403', 403, status('/api/browse', H(aliceCookie)));

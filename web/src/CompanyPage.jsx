@@ -91,10 +91,12 @@ function PresetSelect({ value, options, placeholder, onChange }) {
 
 // Info page for one company: website, ticker symbol, gross revenue, free-form
 // notes, interview questions, referrals (who has referred the candidate to
-// its jobs), the favorite star, the "Not Interested" flag, and the company's
-// tracked jobs. Changes save automatically. `backLabel` names the view the
-// page was opened from.
-export default function CompanyPage({ company, jobs, onBack, backLabel = 'Back to jobs', onSave, isAdmin = true }) {
+// its jobs), the favorite star and "Not Interested" flag (both the selected
+// person's — `personName` — not the company's), and the company's tracked
+// jobs. Changes save automatically. `backLabel` names the view the page was
+// opened from.
+export default function CompanyPage({ company, jobs, personName, onBack, backLabel = 'Back to jobs', onSave, isAdmin = true }) {
+  const who = personName ? ` for ${personName}` : '';
   const [website, setWebsite] = useState(company.website || '');
   const [ticker, setTicker] = useState(company.ticker || '');
   const [grossRevenue, setGrossRevenue] = useState(company.gross_revenue || '');
@@ -210,15 +212,15 @@ export default function CompanyPage({ company, jobs, onBack, backLabel = 'Back t
             <button
               className={`fav-toggle${company.favorite ? ' is-favorite' : ''}`}
               onClick={() => onSave({ favorite: !company.favorite })}
-              title={company.favorite ? 'Remove from favorites' : 'Mark as favorite — its jobs are listed first'}
+              title={company.favorite ? `Remove from favorites${who}` : `Mark as favorite${who} — its jobs are listed first`}
               aria-label={company.favorite ? 'Remove from favorites' : 'Mark as favorite'}
             >
               {company.favorite ? '★' : '☆'}
             </button>
             {company.name}
           </h2>
-          {isAdmin && (
-            <div className="company-header-actions">
+          <div className="company-header-actions">
+            {isAdmin && (
               <button
                 className="clear-btn research-btn"
                 onClick={handleResearch}
@@ -227,19 +229,20 @@ export default function CompanyPage({ company, jobs, onBack, backLabel = 'Back t
               >
                 {researching ? '⏳ Researching…' : '✨ Research with Claude'}
               </button>
-              <label className="checkbox-label ni-toggle">
-                <input
-                  type="checkbox"
-                  checked={Boolean(company.not_interested)}
-                  onChange={e => onSave({ not_interested: e.target.checked })}
-                />
-                Not Interested
-              </label>
-            </div>
-          )}
+            )}
+            {/* Per person, like the star — so a user sets their own. */}
+            <label className="checkbox-label ni-toggle" title={`Hide this company's jobs from the job list${who}`}>
+              <input
+                type="checkbox"
+                checked={Boolean(company.not_interested)}
+                onChange={e => onSave({ not_interested: e.target.checked })}
+              />
+              Not Interested
+            </label>
+          </div>
         </div>
         {Boolean(company.not_interested) && (
-          <div className="ni-notice">Jobs from this company are hidden from the job list by default.</div>
+          <div className="ni-notice">Jobs from this company are hidden from {personName ? `${personName}'s` : 'the'} job list by default.</div>
         )}
         {researching && (
           <div className="research-progress">Claude is searching the web for {company.name} — this usually takes a minute or two.</div>
@@ -341,7 +344,7 @@ export default function CompanyPage({ company, jobs, onBack, backLabel = 'Back t
             </label>
           </div>
         ) : (
-          // Read-only company info for non-admins (they can still favorite it).
+          // Read-only company info for non-admins (they still set their own flags).
           <div className="company-fields company-fields-readonly">
             {(company.company_type || company.employee_count || company.ticker || company.gross_revenue) && (
               <div className="company-fields-row">
