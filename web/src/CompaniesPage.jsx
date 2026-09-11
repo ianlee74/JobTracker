@@ -106,8 +106,10 @@ const COMPARATORS = {
 // Browse every company — those with tracked jobs and those added directly —
 // without going through a job. Click a name to open its page; the star and
 // the filter work in place. `jobs` is the selected person's job list, for
-// the per-company count.
-export default function CompaniesPage({ companies, jobs, isAdmin = true, onOpenCompany, onAdd, onSave }) {
+// the per-company count; the favorite / not-interested flags are that
+// person's too (`personName` names them in the tooltips).
+export default function CompaniesPage({ companies, jobs, personName, isAdmin = true, onOpenCompany, onAdd, onSave }) {
+  const who = personName ? ` for ${personName}` : '';
   const [filter, setFilter] = useState('');
   const [hideNotInterested, setHideNotInterested] = useState(false);
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
@@ -153,7 +155,7 @@ export default function CompaniesPage({ companies, jobs, isAdmin = true, onOpenC
           value={filter}
           onChange={e => setFilter(e.target.value)}
         />
-        <label className="checkbox-label toggle-label" title="Leave out companies marked Not Interested">
+        <label className="checkbox-label toggle-label" title={`Leave out companies marked Not Interested${who}`}>
           <input type="checkbox" checked={hideNotInterested} onChange={e => setHideNotInterested(e.target.checked)} />
           Hide not interested
         </label>
@@ -173,7 +175,7 @@ export default function CompaniesPage({ companies, jobs, isAdmin = true, onOpenC
         <table className="companies-table">
           <thead>
             <tr>
-              <th style={{ width: '4%' }} title="Favorite — its jobs are listed first">★</th>
+              <th style={{ width: '4%' }} title={`Favorite${who} — its jobs are listed first`}>★</th>
               <SortableHeader label="Company" sortKey="name" sort={sort} onSort={handleSort} width="24%" />
               <SortableHeader label="Type" sortKey="company_type" sort={sort} onSort={handleSort} width="15%" />
               <SortableHeader label="Employees" sortKey="employee_count" sort={sort} onSort={handleSort} width="11%" />
@@ -193,7 +195,7 @@ export default function CompaniesPage({ companies, jobs, isAdmin = true, onOpenC
                   <button
                     className={`fav-toggle fav-toggle-sm${c.favorite ? ' is-favorite' : ''}`}
                     onClick={() => onSave(c.name, { favorite: !c.favorite })}
-                    title={c.favorite ? 'Remove from favorites' : 'Mark as favorite — its jobs are listed first'}
+                    title={c.favorite ? `Remove from favorites${who}` : `Mark as favorite${who} — its jobs are listed first`}
                     aria-label={c.favorite ? 'Remove from favorites' : 'Mark as favorite'}
                   >
                     {c.favorite ? '★' : '☆'}
@@ -201,7 +203,7 @@ export default function CompaniesPage({ companies, jobs, isAdmin = true, onOpenC
                 </td>
                 <td className="cell-company">
                   <button className="company-link" onClick={() => onOpenCompany(c.name)} title="Open company page">{c.name}</button>
-                  {Boolean(c.not_interested) && <span className="ni-badge" title="Company marked Not Interested">🚫</span>}
+                  {Boolean(c.not_interested) && <span className="ni-badge" title={`Company marked Not Interested${who}`}>🚫</span>}
                 </td>
                 <td>{c.company_type || <span className="muted">—</span>}</td>
                 <td>{c.employee_count || <span className="muted">—</span>}</td>

@@ -35,7 +35,7 @@ Call `list_jobs` with a `status` filter array containing `interested`, `applied`
 From the data:
 - **Positive signal:** jobs marked Interested / Applied / Interviewing / Offer show which companies, titles, categories, and levels the person actually responds to. Bias today's queries and ranking toward more of that.
 - **Negative signal:** jobs marked Not Moving Forward — read the `rejection_reason` field, not just the company name. Repeated reasons (e.g. "Not Qualified" on a certain role type, "Not Remote" on roles that looked remote) tell you what to filter out before spending search budget on it.
-- **`not_interested: true` companies:** never search for, verify, or add jobs from these, even if a posting looks like a perfect fit.
+- **`not_interested: true` companies:** never search for, verify, or add jobs from these, even if a posting looks like a perfect fit. (Both company flags are per person — `list_companies` reports the flags of the `person` you pass, so always pass it.)
 - **`favorite: true` companies:** give their careers pages an extra look, even outside the category priorities.
 - **Dedupe lists:** build a list of already-tracked company names, and already-tracked URLs for any company you'll search deeply. `add_jobs` skips exact URL duplicates automatically, so this is about not wasting search effort re-finding the same req, not correctness.
 

@@ -142,7 +142,7 @@ flowchart LR
 - **Google Identity Services ID tokens, verified in-process.** The web UI gets a signed JWT from Google's sign-in button; the server verifies its signature against Google's published JWKS using `node:crypto` — no OAuth redirect flow, no client secret, and **no new dependencies** ([auth.js](server/auth.js)). The public client id doubles as the `aud`-claim gate on which tokens are accepted.
 - **Invite-only, with a lockout escape hatch.** A successful Google sign-in only works if the email already exists in the `users` table (invited by an admin) — except emails in `JOBTRACKER_ADMIN_EMAILS`, which self-provision as admins on first sign-in, so a fresh deployment is never locked out.
 - **Sessions are SQLite-backed HttpOnly cookies** (30-day expiry, opportunistic cleanup on creation) rather than signed stateless tokens — revocation is a row delete, and the database is already right there.
-- **Two roles, enforced per-route, scoped by data ownership.** A `user` account is linked to one person and is hard-scoped to that person's world: their own jobs (whatever filters they request), a restricted field set on edits (`status`, `rejection_reason`, `missing_skills`, `user_note` — the admin's `note` stays read-only to them), favorites-only on companies, and their own documents. Admin-only surfaces: filesystem endpoints (browse/upload), people/settings/user management, the email digest, and job deletion. Two details worth noting:
+- **Two roles, enforced per-route, scoped by data ownership.** A `user` account is linked to one person and is hard-scoped to that person's world: their own jobs (whatever filters they request), a restricted field set on edits (`status`, `rejection_reason`, `missing_skills`, `user_note` — the admin's `note` stays read-only to them), their own favorite / not-interested flags on companies (never the shared profile), and their own documents. Admin-only surfaces: filesystem endpoints (browse/upload), people/settings/user management, the email digest, and job deletion. Two details worth noting:
   - Ownership misses return **404, not 403**, so one user's job/document ids aren't confirmed to exist to another.
   - Admins cannot demote or delete their own signed-in account — the deployment can't be locked out by a misclick.
 - **`user_note` exists because of roles:** the original `note` column became the admin's; candidates got their own column rather than a shared free-for-all field, so neither side can clobber the other.
@@ -156,6 +156,8 @@ erDiagram
     users ||--o{ sessions : "user_id"
     jobs ||--o{ job_documents : "job_id"
     companies |o..o{ jobs : "matched by company name"
+    companies ||--o{ company_flags : "matched by company name"
+    people ||--o{ company_flags : "person_id"
 
     people {
         int id PK
@@ -208,8 +210,12 @@ erDiagram
         text gross_revenue "free text, e.g. $245.1B (FY2024)"
         text interview_questions "newline-delimited"
         text referrals "comma-delimited names; auto-fed by jobs.referred_by"
-        int not_interested "hides its jobs by default"
-        int favorite "its jobs win sort ties"
+    }
+    company_flags {
+        text company PK "company name"
+        int person_id PK
+        int favorite "this person's — their jobs at it win sort ties"
+        int not_interested "this person's — hides its jobs for them"
     }
     job_documents {
         int id PK
@@ -226,6 +232,7 @@ erDiagram
 Notable modeling decisions:
 
 - **Companies are joined by name, not foreign key.** Jobs arrive from an LLM with a free-text company name; forcing FK integrity would require an upsert-and-resolve step on every insert for little gain. Instead, `listCompanies()` synthesizes the company list from `GROUP BY company` over jobs, overlaid with any saved `companies` rows — so a company "exists" the moment a job mentions it, and saving a note upserts the row lazily. The cost is that renaming a company on its jobs orphans its saved info; acceptable at this scale.
+- **Favorite and not-interested are per person, the company profile is shared.** Everything factual about a company (website, size, ticker, interview questions, notes) is the same whoever is looking, but whether it is a favorite or off the table is a preference — one candidate can pass on an airline another is keen on. So the two flags live in `company_flags`, keyed by (company, person), and every reader takes the person whose flags it wants: the API from `?person=` (a `user` account's own person is implied), MCP from its `person` argument, and `listJobs` from each job's own owner, so a cross-person listing still hides and prioritizes correctly. Setting a flag without a person is an error rather than a guess.
 - **Both raw and parsed salary are stored.** `salary` keeps exactly what the posting said (for display and trust); `salary_min`/`salary_max` are best-effort parsed annual figures (for sorting/filtering). `parseSalary` deliberately returns nulls for anything untrustworthy — hourly rates, "Competitive" — so the UI falls back to the raw string rather than showing a wrong number. Explicit values from a caller always beat the parser.
 - **`job_documents` stores relative paths** (forward-slashed) under the person's documents directory, so the whole documents tree can be relocated by changing one setting, and the DB file stays portable across machines.
 - **`people` and `users` are distinct concepts on purpose.** A person is a *candidate whose jobs are tracked*; a user is a *web account*. An admin tracks jobs for people who may never sign in, and linking a user to a person is an explicit admin action — conflating the two would force every candidate to have a Google account.
@@ -353,7 +360,7 @@ The decisions worth understanding:
 - **Lenient in, canonical out.** Anywhere an LLM or human supplies an enum-ish value (level, company type, employee count), a normalizer maps near-misses to the canonical preset and passes unrecognized values through as free text rather than rejecting them. Validation hard-fails only where correctness demands it (unknown person, invalid status, invalid role).
 - **Derived data is computed at write time, not read time.** Level classification and salary parsing happen on insert/update and are stored, so list queries stay simple and fast, and a misclassification can be corrected by hand without being overwritten on the next read.
 - **Deletes are conservative.** Deleting a job removes its DB rows but leaves generated files on disk; deleting a person requires them to have no jobs; deleting a user also deletes their sessions; the MCP `delete_job` description steers Claude toward status changes instead of deletion.
-- **Sorting encodes preference, not just order:** newest first, favorite companies win ties within a date, then company/id — implemented in SQL so the UI, the API, and MCP all agree.
+- **Sorting encodes preference, not just order:** newest first, the job owner's favorite companies win ties within a date, then company/id — implemented in SQL so the UI, the API, and MCP all agree.
 - **Secrets live in the environment, never the database:** the Anthropic key, the Google client id, the MCP token, and the admin-email seed list are all env vars; the DB stores no credential material beyond random session/feedback tokens it minted itself.
 
 ## What was deliberately left out

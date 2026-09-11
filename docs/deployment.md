@@ -110,7 +110,7 @@ person whose jobs they should see.
 | View / add jobs | all people | own person only |
 | Edit jobs | all fields | `status`, rejection reason, missing skills, own note |
 | Notes | edits admin note, sees user note | edits own note, sees admin note read-only |
-| Companies | full edit | view + favorite ★ |
+| Companies | full edit; flags for any person | view + own favorite ★ / Not Interested |
 | Documents | generate + view all | generate + view own |
 | People, settings, users, file browser, email digest | ✔ | — |
 | MCP endpoint | bearer token | — |

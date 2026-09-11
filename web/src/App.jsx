@@ -285,7 +285,7 @@ export default function App() {
         pid = peopleData[0]?.id ?? null;
         setPersonId(pid);
       }
-      const [jobsData, statsData, companiesData, skillsData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies(), fetchMissingSkills()]);
+      const [jobsData, statsData, companiesData, skillsData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies(pid), fetchMissingSkills()]);
       setJobs(jobsData);
       setStats(statsData);
       setCompanies(companiesData);
@@ -387,7 +387,7 @@ export default function App() {
     const updated = await updateJob(editingJob.id, fields);
     setJobs(prev => prev.map(j => (j.id === editingJob.id ? updated : j)));
     setStats(await fetchStats(personId));
-    if ('referred_by' in fields || 'company' in fields) setCompanies(await fetchCompanies());
+    if ('referred_by' in fields || 'company' in fields) setCompanies(await fetchCompanies(personId));
     flashSaved();
   };
 
@@ -484,7 +484,7 @@ export default function App() {
 
   const handleCompanySave = async (name, fields) => {
     try {
-      const updated = await updateCompany(name, fields);
+      const updated = await updateCompany(name, fields, personId);
       setCompanies(prev =>
         prev.some(c => c.name === name)
           ? prev.map(c => (c.name === name ? { ...c, ...updated } : c))
@@ -499,7 +499,7 @@ export default function App() {
   // A company added from the companies page opens straight away, so its
   // profile can be filled in or researched. Errors surface in the form.
   const handleAddCompany = async (fields) => {
-    const company = await addCompany(fields);
+    const company = await addCompany(fields, personId);
     setCompanies(prev => [...prev.filter(c => c.name !== company.name), company].sort((a, b) => a.name.localeCompare(b.name)));
     setActiveCompany(company.name);
     flashSaved();
@@ -512,6 +512,8 @@ export default function App() {
 
   // The job list is showing (no company page on top, companies view not selected).
   const jobsView = view === 'jobs' && !activeCompany;
+  // Named in the company pages, since favorite / not-interested are theirs.
+  const personName = people.find(p => p.id === personId)?.name;
 
   const toggleStatus = (s) => {
     setStatusFilters(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
@@ -525,7 +527,9 @@ export default function App() {
     );
   };
 
-  // Companies flagged "Not Interested" — their jobs are hidden by default.
+  // Companies the selected person flagged "not interested" — their jobs are
+  // hidden unless asked for. (Both company flags are per person; the server
+  // returns the selected person's.)
   const flaggedCompanies = useMemo(
     () => new Set(companies.filter(c => c.not_interested).map(c => c.name)),
     [companies]
@@ -688,9 +692,10 @@ export default function App() {
         <CompanyPage
           company={
             companies.find(c => c.name === activeCompany)
-            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0 }
+            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0, favorite: 0 }
           }
           jobs={jobs.filter(j => j.company === activeCompany)}
+          personName={personName}
           onBack={() => setActiveCompany(null)}
           backLabel={view === 'companies' ? 'Back to companies' : 'Back to jobs'}
           onSave={(fields) => handleCompanySave(activeCompany, fields)}
@@ -702,6 +707,7 @@ export default function App() {
         <CompaniesPage
           companies={companies}
           jobs={jobs}
+          personName={personName}
           isAdmin={isAdmin}
           onOpenCompany={setActiveCompany}
           onAdd={handleAddCompany}

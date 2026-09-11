@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany } from './research.js';
@@ -251,15 +251,22 @@ async function handleApi(req, res, url, user) {
     }
   }
 
+  // A company's favorite / not-interested flags belong to a person: a user's
+  // own; for an admin, the ?person= query (the UI's selected person). Without
+  // one, flags read as unset and setting one is rejected.
+  const flagsPersonId = isAdmin
+    ? (url.searchParams.get('person') ? Number(url.searchParams.get('person')) : undefined)
+    : user.person_id;
+
   if (url.pathname === '/api/companies') {
-    if (req.method === 'GET') return json(res, 200, listCompanies());
+    if (req.method === 'GET') return json(res, 200, listCompanies({ personId: flagsPersonId }));
     // Create a company before any of its jobs are tracked; body: { name,
     // ...profile fields }. 409 when the name (case-insensitively) exists.
     if (req.method === 'POST') {
       if (!isAdmin) return forbidden(res);
       const { name, ...fields } = await readBody(req);
       try {
-        return json(res, 201, addCompany(name, fields));
+        return json(res, 201, addCompany(name, fields, { personId: flagsPersonId }));
       } catch (err) {
         return json(res, /already exists/.test(err.message) ? 409 : 400, { error: err.message });
       }
@@ -316,15 +323,16 @@ async function handleApi(req, res, url, user) {
   if (url.pathname === '/api/company') {
     const name = url.searchParams.get('name') || '';
     if (!name.trim()) return json(res, 400, { error: 'name query parameter is required' });
-    if (req.method === 'GET') return json(res, 200, getCompany(name));
+    if (req.method === 'GET') return json(res, 200, getCompany(name, { personId: flagsPersonId }));
     if (req.method === 'PATCH') {
       const body = await readBody(req);
-      // Users may only flag/unflag favorites; everything else is admin's.
-      if (!isAdmin && Object.keys(body).some(k => k !== 'favorite')) {
-        return forbidden(res, 'Your role can only change the favorite flag on a company');
+      // Users may only set their own favorite / not-interested flags; the
+      // shared profile is admin's.
+      if (!isAdmin && Object.keys(body).some(k => !COMPANY_FLAGS.includes(k))) {
+        return forbidden(res, 'Your role can only change the favorite and not-interested flags on a company');
       }
       try {
-        return json(res, 200, upsertCompany(name, body));
+        return json(res, 200, upsertCompany(name, body, { personId: flagsPersonId }));
       } catch (err) {
         return json(res, 400, { error: err.message });
       }

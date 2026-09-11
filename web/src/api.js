@@ -41,12 +41,15 @@ export const updateJob = (id, fields) =>
   request(`/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
 export const deleteJob = (id) =>
   request(`/api/jobs/${id}`, { method: 'DELETE' });
-export const fetchCompanies = () => request('/api/companies');
+// A company's favorite / not_interested flags are per person, so company
+// calls carry the selected person (the server pins a user to their own).
+export const fetchCompanies = (personId) =>
+  request('/api/companies' + (personId ? `?person=${personId}` : ''));
 // Creates a company before any of its jobs are tracked; fields: { name, ...profile }.
-export const addCompany = (fields) =>
-  request('/api/companies', { method: 'POST', body: JSON.stringify(fields) });
-export const updateCompany = (name, fields) =>
-  request(`/api/company?name=${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify(fields) });
+export const addCompany = (fields, personId) =>
+  request('/api/companies' + (personId ? `?person=${personId}` : ''), { method: 'POST', body: JSON.stringify(fields) });
+export const updateCompany = (name, fields, personId) =>
+  request(`/api/company?name=${encodeURIComponent(name)}${personId ? `&person=${personId}` : ''}`, { method: 'PATCH', body: JSON.stringify(fields) });
 // Has Claude research a company on the web (slow — a minute or two). Resolves
 // to proposed field values + a briefing; nothing is saved until the caller
 // applies it with updateCompany.
