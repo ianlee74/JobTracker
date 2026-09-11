@@ -195,7 +195,7 @@ export default function CompaniesPage({ companies, jobs, personName, isAdmin = t
                   <button
                     className={`fav-toggle fav-toggle-sm${c.favorite ? ' is-favorite' : ''}`}
                     onClick={() => onSave(c.name, { favorite: !c.favorite })}
-                    title={c.favorite ? `Remove from favorites${who}` : `Mark as favorite${who} — its jobs are listed first`}
+                    title={c.favorite ? `Remove from favorites${who}` : `Mark as favorite${who} — its jobs are listed first${c.not_interested ? ' (clears Not Interested)' : ''}`}
                     aria-label={c.favorite ? 'Remove from favorites' : 'Mark as favorite'}
                   >
                     {c.favorite ? '★' : '☆'}

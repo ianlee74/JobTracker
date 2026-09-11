@@ -210,8 +210,8 @@ const COMPANY_PROFILE_SCHEMA = {
   note: z.string().optional().describe('Replaces the existing company note'),
   interview_questions: z.array(z.string()).optional().describe('Questions to ask this company in an interview. REPLACES the existing list (an empty array clears it) — use add_interview_questions to append.'),
   referrals: z.array(z.string()).optional().describe('Names of everyone who has referred the candidate to this company\'s jobs. REPLACES the existing list (an empty array clears it) — use add_referrals to append. Setting referred_by on a job adds to this list automatically.'),
-  not_interested: z.boolean().optional().describe('true hides the company\'s jobs from this person by default; false restores them. Per person — see the person argument.'),
-  favorite: z.boolean().optional().describe('true prioritizes the company\'s jobs within this person\'s job list sort order (they win ties); false removes the priority. Per person — see the person argument.')
+  not_interested: z.boolean().optional().describe('true hides the company\'s jobs from this person by default and clears their favorite flag (the two are mutually exclusive); false restores them. Per person — see the person argument.'),
+  favorite: z.boolean().optional().describe('true prioritizes the company\'s jobs within this person\'s job list sort order (they win ties) and clears their not_interested flag (the two are mutually exclusive); false removes the priority. Per person — see the person argument.')
 };
 
 server.registerTool('list_companies', {
@@ -234,7 +234,7 @@ server.registerTool('add_company', {
 
 server.registerTool('update_company', {
   title: 'Update company info',
-  description: 'Save notes/info about a company (website, type, employee count, ticker symbol, gross revenue, interview questions), record who has referred the candidate to its jobs, mark it "not interested" for a person, and/or flag it as that person\'s favorite. The profile is shared; the two flags are per person (pass person). Jobs from a person\'s not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from their favorite companies are prioritized within the list\'s sort order. Creates the company record if it does not exist yet. Follow the research-company skill (skills/research-company/SKILL.md) when researching a company yourself to fill these in.',
+  description: 'Save notes/info about a company (website, type, employee count, ticker symbol, gross revenue, interview questions), record who has referred the candidate to its jobs, mark it "not interested" for a person, and/or flag it as that person\'s favorite. The profile is shared; the two flags are per person (pass person) and mutually exclusive — setting one clears the other, and passing both as true is an error. Jobs from a person\'s not-interested companies are hidden by default in the UI and in list_jobs (but stay tracked); jobs from their favorite companies are prioritized within the list\'s sort order. Creates the company record if it does not exist yet. Follow the research-company skill (skills/research-company/SKILL.md) when researching a company yourself to fill these in.',
   inputSchema: {
     name: z.string().describe('Company name, exactly as it appears on its jobs'),
     person: flagsPersonArg,

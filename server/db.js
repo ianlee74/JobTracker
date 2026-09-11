@@ -467,6 +467,11 @@ db.exec(`
     }
     for (const col of old) db.exec(`ALTER TABLE companies DROP COLUMN ${col}`);
   }
+  // The two flags contradict each other (see setCompanyFlags), but rows
+  // written before that rule — or by the global-flag migration above — could
+  // carry both. "Not interested" is the deliberate one (it hides jobs), so it
+  // wins and the stale favorite is dropped. Idempotent.
+  db.prepare('UPDATE company_flags SET favorite = 0 WHERE favorite = 1 AND not_interested = 1').run();
 }
 
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
@@ -854,13 +859,22 @@ export function upsertCompany(name, fields, { personId } = {}) {
 }
 
 // Sets one person's favorite / not_interested flags on a company (either or
-// both; booleans or 0/1). A row with neither flag set is removed, so the table
-// only holds actual preferences.
+// both; booleans or 0/1). The two contradict each other — a company cannot be
+// both a favorite and off the table for the same person — so setting one
+// clears the other, and asking for both at once is an error. A row with
+// neither flag set is removed, so the table only holds actual preferences.
 export function setCompanyFlags(name, personId, flags) {
   name = (name || '').trim();
   if (!name) throw new Error('Company name is required');
   if (personId == null || !getPerson(personId)) throw new Error(`Unknown person id "${personId}"`);
   const updates = Object.entries(flags).filter(([k]) => COMPANY_FLAGS.includes(k)).map(([k, v]) => [k, v ? 1 : 0]);
+  const on = new Set(updates.filter(([, v]) => v).map(([k]) => k));
+  if (on.has('favorite') && on.has('not_interested')) {
+    throw new Error('A company cannot be both a favorite and not interested for the same person — set one or the other');
+  }
+  // Turning one flag on turns the other off.
+  if (on.has('favorite') && !updates.some(([k]) => k === 'not_interested')) updates.push(['not_interested', 0]);
+  if (on.has('not_interested') && !updates.some(([k]) => k === 'favorite')) updates.push(['favorite', 0]);
   if (updates.length) {
     if (!db.prepare('SELECT 1 FROM companies WHERE name = ?').get(name)) {
       db.prepare('INSERT INTO companies (name) VALUES (?)').run(name);

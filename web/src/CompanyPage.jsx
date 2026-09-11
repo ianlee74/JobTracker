@@ -92,7 +92,8 @@ function PresetSelect({ value, options, placeholder, onChange }) {
 // Info page for one company: website, ticker symbol, gross revenue, free-form
 // notes, interview questions, referrals (who has referred the candidate to
 // its jobs), the favorite star and "Not Interested" flag (both the selected
-// person's — `personName` — not the company's), and the company's tracked
+// person's — `personName` — not the company's; the server clears one when
+// the other is set, and the returned company reflects that), and the tracked
 // jobs. Changes save automatically. `backLabel` names the view the page was
 // opened from.
 export default function CompanyPage({ company, jobs, personName, onBack, backLabel = 'Back to jobs', onSave, isAdmin = true }) {
@@ -212,7 +213,7 @@ export default function CompanyPage({ company, jobs, personName, onBack, backLab
             <button
               className={`fav-toggle${company.favorite ? ' is-favorite' : ''}`}
               onClick={() => onSave({ favorite: !company.favorite })}
-              title={company.favorite ? `Remove from favorites${who}` : `Mark as favorite${who} — its jobs are listed first`}
+              title={company.favorite ? `Remove from favorites${who}` : `Mark as favorite${who} — its jobs are listed first${company.not_interested ? ' (clears Not Interested)' : ''}`}
               aria-label={company.favorite ? 'Remove from favorites' : 'Mark as favorite'}
             >
               {company.favorite ? '★' : '☆'}
@@ -231,7 +232,7 @@ export default function CompanyPage({ company, jobs, personName, onBack, backLab
               </button>
             )}
             {/* Per person, like the star — so a user sets their own. */}
-            <label className="checkbox-label ni-toggle" title={`Hide this company's jobs from the job list${who}`}>
+            <label className="checkbox-label ni-toggle" title={`Hide this company's jobs from the job list${who}${company.favorite ? ' (clears the favorite star)' : ''}`}>
               <input
                 type="checkbox"
                 checked={Boolean(company.not_interested)}
