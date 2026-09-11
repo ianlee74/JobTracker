@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, upsertCompany, addCompanyReferrals, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
+import { researchCompany } from './research.js';
 
 // Registers every JobTracker tool on a fresh McpServer. Shared between the
 // stdio entry point (mcp-server.js, local dev) and the remote /mcp endpoint
@@ -215,6 +216,15 @@ server.registerTool('update_company', {
   if (add_referrals?.length) company = addCompanyReferrals(name, add_referrals);
   return ok(company);
 });
+
+server.registerTool('research_company', {
+  title: 'Research a company',
+  description: 'Have the JobTracker server research a company on the web through the Anthropic API (web search) and propose values for its profile: website, company_type, employee_count, plus a short briefing (what it does, size, ownership, engineering signals, employer reputation, recent news) with sources. Returns the proposal alongside the company\'s current values without saving anything; pass apply: true to save it (website/type/count are set from the proposal, the briefing is appended to the company note). Slow: allow one to two minutes. Useful when you cannot search the web yourself; if you can, researching directly and calling update_company is equivalent.',
+  inputSchema: {
+    name: z.string().describe('Company name, exactly as it appears on its jobs'),
+    apply: z.boolean().optional().describe('true saves the proposal to the company record; default false just returns it for review')
+  }
+}, async ({ name, apply }) => ok(await researchCompany(name, { apply: apply === true })));
 
 server.registerTool('generate_documents', {
   title: 'Generate tailored resume & cover letter',

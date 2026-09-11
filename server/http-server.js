@@ -7,6 +7,7 @@ import path from 'node:path';
 import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
+import { researchCompany } from './research.js';
 import { handleRespond } from './respond.js';
 import { handleAuth, requestUser, authEnabled, checkMcpToken, mcpTokenConfigured } from './auth.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -316,6 +317,21 @@ async function handleApi(req, res, url, user) {
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
+    }
+  }
+
+  // Have Claude research a company on the web (Anthropic API; slow — one to
+  // two minutes). Returns proposed field values + a briefing without saving
+  // anything, unless the body says { apply: true }.
+  if (req.method === 'POST' && url.pathname === '/api/company/research') {
+    if (!isAdmin) return forbidden(res);
+    const name = url.searchParams.get('name') || '';
+    if (!name.trim()) return json(res, 400, { error: 'name query parameter is required' });
+    const body = await readBody(req);
+    try {
+      return json(res, 200, await researchCompany(name, { apply: body.apply === true }));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
     }
   }
 

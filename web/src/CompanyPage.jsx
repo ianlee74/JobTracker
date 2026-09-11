@@ -1,5 +1,58 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref, parseNames } from './constants.js';
+import { researchCompany } from './api.js';
+
+// One proposed field in the research preview: the researched value next to
+// what is saved now, so the change is visible before it is applied.
+function ProposedField({ label, proposed, current }) {
+  const changed = Boolean(proposed) && proposed !== (current || '');
+  return (
+    <div className="research-field">
+      <span className="research-field-label">{label}</span>
+      <span className={changed ? 'research-field-new' : ''}>{proposed || <em>not found</em>}</span>
+      {changed && current && <span className="research-field-old">was: {current}</span>}
+    </div>
+  );
+}
+
+// The result of "Research with Claude": proposed website / type / employee
+// count, the briefing that would be appended to the notes, and its sources.
+// Nothing is saved until Apply.
+function ResearchPreview({ research, onApply, onDiscard }) {
+  return (
+    <div className="research-preview">
+      <div className="research-preview-title">
+        ✨ Claude's research
+        {research.confidence !== 'high' && (
+          <span className="research-confidence" title="How sure Claude is that it found the right company">
+            {research.confidence} confidence
+          </span>
+        )}
+      </div>
+      <div className="research-fields">
+        <ProposedField label="Website" proposed={research.website} current={research.current.website} />
+        <ProposedField label="Company Type" proposed={research.company_type} current={research.current.company_type} />
+        <ProposedField label="Employee Count" proposed={research.employee_count} current={research.current.employee_count} />
+        {research.headquarters && <ProposedField label="Headquarters" proposed={research.headquarters} />}
+        {research.founded && <ProposedField label="Founded" proposed={research.founded} />}
+      </div>
+      <div className="research-summary">{research.summary}</div>
+      {research.sources.length > 0 && (
+        <div className="research-sources">
+          Sources:{' '}
+          {research.sources.map((url, i) => (
+            <a key={url} href={url} target="_blank" rel="noopener noreferrer">[{i + 1}]</a>
+          ))}
+        </div>
+      )}
+      <div className="research-actions">
+        <button className="primary-btn" onClick={onApply}>Apply to fields</button>
+        <button className="clear-btn" onClick={onDiscard}>Discard</button>
+        <span className="hint">Apply sets the fields above and appends the briefing to Notes.</span>
+      </div>
+    </div>
+  );
+}
 
 // Preset dropdown that still displays a custom stored value (e.g. free text
 // saved through the MCP server) by listing it as an extra option.
@@ -21,12 +74,47 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
   const [note, setNote] = useState(company.note || '');
   const [referrals, setReferrals] = useState(company.referrals || '');
   const noteTimer = useRef(null);
+  const [researching, setResearching] = useState(false);
+  const [research, setResearch] = useState(null); // proposal awaiting Apply / Discard
+  const [researchError, setResearchError] = useState(null);
 
   useEffect(() => {
     setWebsite(company.website || '');
     setNote(company.note || '');
     setReferrals(company.referrals || '');
+    setResearch(null);
+    setResearchError(null);
   }, [company.name]);
+
+  // Ask Claude to research the company; the answer is shown as a proposal.
+  const handleResearch = async () => {
+    setResearching(true);
+    setResearchError(null);
+    setResearch(null);
+    try {
+      setResearch(await researchCompany(company.name));
+    } catch (err) {
+      setResearchError(err.message);
+    } finally {
+      setResearching(false);
+    }
+  };
+
+  // Apply the proposal: researched values replace website / type / count
+  // (blank ones leave the field alone) and the briefing is appended to the
+  // notes — one save, with the local field state updated to match.
+  const applyResearch = () => {
+    const fields = {};
+    for (const key of ['website', 'company_type', 'employee_count']) {
+      if (research[key]) fields[key] = research[key];
+    }
+    clearTimeout(noteTimer.current);
+    fields.note = note ? `${note}\n\n${research.note_section}` : research.note_section;
+    if (fields.website) setWebsite(fields.website);
+    setNote(fields.note);
+    setResearch(null);
+    onSave(fields);
+  };
 
   // Referrals are also added automatically when a job's Referred-by is set;
   // pick those up unless the field is being edited right now.
@@ -73,18 +161,35 @@ export default function CompanyPage({ company, jobs, onBack, onSave, isAdmin = t
             {company.name}
           </h2>
           {isAdmin && (
-            <label className="checkbox-label ni-toggle">
-              <input
-                type="checkbox"
-                checked={Boolean(company.not_interested)}
-                onChange={e => onSave({ not_interested: e.target.checked })}
-              />
-              Not Interested
-            </label>
+            <div className="company-header-actions">
+              <button
+                className="clear-btn research-btn"
+                onClick={handleResearch}
+                disabled={researching}
+                title="Have Claude search the web for this company and propose values for the fields below"
+              >
+                {researching ? '⏳ Researching…' : '✨ Research with Claude'}
+              </button>
+              <label className="checkbox-label ni-toggle">
+                <input
+                  type="checkbox"
+                  checked={Boolean(company.not_interested)}
+                  onChange={e => onSave({ not_interested: e.target.checked })}
+                />
+                Not Interested
+              </label>
+            </div>
           )}
         </div>
         {Boolean(company.not_interested) && (
           <div className="ni-notice">Jobs from this company are hidden from the job list by default.</div>
+        )}
+        {researching && (
+          <div className="research-progress">Claude is searching the web for {company.name} — this usually takes a minute or two.</div>
+        )}
+        {researchError && <div className="error-banner research-error">{researchError}</div>}
+        {research && (
+          <ResearchPreview research={research} onApply={applyResearch} onDiscard={() => setResearch(null)} />
         )}
         {isAdmin ? (
           <div className="company-fields">

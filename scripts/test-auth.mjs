@@ -125,6 +125,8 @@ await check('user cannot patch other job -> 404', 404, status(`/api/jobs/${defau
 await check('user add job forced to self', alice.id, jsonBody('/api/jobs', { method: 'POST', body: JSON.stringify({ title: 'Sneaky', company: 'Evil', url: 'https://evil.example/3', person_id: defaultPerson.id }), ...H(aliceCookie) }).then(r => r.jobs[0].person_id));
 await check('user can favorite company', 200, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ favorite: true }), ...H(aliceCookie) }));
 await check('user cannot edit company note -> 403', 403, status('/api/company?name=Globex', { method: 'PATCH', body: JSON.stringify({ note: 'x' }), ...H(aliceCookie) }));
+await check('user cannot research company -> 403', 403, status('/api/company/research?name=Globex', { method: 'POST', body: '{}', ...H(aliceCookie) }));
+await check('research needs a company name -> 400', 400, status('/api/company/research', { method: 'POST', body: '{}', ...H(adminCookie) }));
 await check('user cannot browse -> 403', 403, status('/api/browse', H(aliceCookie)));
 await check('user cannot list users -> 403', 403, status('/api/users', H(aliceCookie)));
 await check('user cannot open settings -> 403', 403, status(`/api/settings?person=${alice.id}`, H(aliceCookie)));

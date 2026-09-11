@@ -760,6 +760,94 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
 
 .ni-toggle { font-size: 13px; font-weight: 600; color: var(--text-muted); }
 
+.company-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.research-btn:disabled { cursor: default; opacity: 0.7; }
+
+.research-progress {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.research-error { margin: 10px 0 0; }
+
+/* Claude's proposed company profile, shown until applied or discarded. */
+.research-preview {
+  margin-top: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.research-preview-title {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.research-confidence {
+  font-size: 11px;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 999px;
+  padding: 2px 8px;
+  text-transform: capitalize;
+}
+@media (prefers-color-scheme: dark) {
+  .research-confidence { background: #3a2f10; color: #fbbf24; }
+}
+
+.research-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 16px;
+}
+
+.research-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.research-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.research-field-new { font-weight: 600; }
+
+.research-field-old {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.research-summary { white-space: pre-wrap; line-height: 1.45; }
+
+.research-sources { font-size: 12px; color: var(--text-muted); }
+.research-sources a { margin-right: 4px; }
+
+.research-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .ni-notice {
   margin-top: 8px;
   background: #fef3c7;

@@ -381,9 +381,11 @@ async function buildDocx(templateBuffer, documentXml) {
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
-// One Messages API call; returns the document text. Streams to avoid HTTP
-// timeouts on long generations, and continues through pause_turn (web_fetch).
-async function generateDocument({ contextBlocks, tools, instruction, model = MODEL, system = SYSTEM_PROMPT }) {
+// One Messages API call; returns the response text. Streams to avoid HTTP
+// timeouts on long generations, and continues through pause_turn (web_fetch /
+// web_search). Shared with company research (research.js), which passes its
+// own system prompt and `what` (used in the refusal message).
+export async function generateDocument({ contextBlocks, tools, instruction, model = MODEL, system = SYSTEM_PROMPT, what = 'to generate this document' }) {
   const messages = [{ role: 'user', content: [...contextBlocks, { type: 'text', text: instruction }] }];
   // Server-side fallback keeps generation alive when the primary model is
   // overloaded, but not every model a skill can select supports the
@@ -415,13 +417,13 @@ async function generateDocument({ contextBlocks, tools, instruction, model = MOD
       continue;
     }
     if (response.stop_reason === 'refusal') {
-      throw new Error(`Claude declined to generate this document${response.stop_details?.explanation ? `: ${response.stop_details.explanation}` : '.'}`);
+      throw new Error(`Claude declined ${what}${response.stop_details?.explanation ? `: ${response.stop_details.explanation}` : '.'}`);
     }
     if (response.stop_reason === 'max_tokens') {
       throw new Error('Generation ran out of output tokens before finishing.');
     }
     const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-    if (!text) throw new Error('The API returned an empty document.');
+    if (!text) throw new Error('The API returned an empty response.');
     return text;
   }
   throw new Error('Generation did not finish (too many paused turns).');
