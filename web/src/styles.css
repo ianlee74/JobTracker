@@ -1135,3 +1135,48 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
   text-align: left;
 }
 .skills-menu-empty { padding: 6px 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+/* Jobs / Companies switch in the header. */
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--card);
+}
+.view-switch button {
+  padding: 7px 14px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.view-switch button + button { border-left: 1px solid var(--border); }
+.view-switch button:hover { color: var(--text); }
+.view-switch button.active { background: var(--accent); color: white; }
+
+/* Companies page: the browse table and the add-company form. */
+.companies-page { display: flex; flex-direction: column; }
+.companies-page .controls .add-company-btn { margin-left: auto; }
+.companies-table td { vertical-align: middle; }
+.companies-table .cell-company { font-weight: 600; }
+.companies-table .cell-website a { color: var(--text-muted); }
+.companies-table .cell-website a:hover { color: var(--accent); }
+.companies-table .muted { color: var(--text-muted); }
+.companies-table .company-row-ni .cell-company { color: var(--text-muted); font-weight: 400; }
+.companies-empty { text-align: center; color: var(--text-muted); padding: 24px 12px !important; }
+.fav-toggle-sm { font-size: 18px; }
+.company-form { max-width: 560px; }
+
+/* Ticker symbol → Fidelity research page. */
+.ticker-link { font-weight: 600; letter-spacing: 0.02em; }
+.company-field-title { display: flex; align-items: center; gap: 10px; }
+.company-field-title .ticker-link { font-size: 11px; font-weight: 600; }
+
+/* Interview questions on the company page and in the research preview. */
+.questions-textarea { min-height: 130px; }
+.questions-list, .research-questions ol { margin: 6px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; }
+.research-questions { display: flex; flex-direction: column; gap: 2px; }

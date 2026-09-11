@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany } from './research.js';
@@ -251,8 +251,19 @@ async function handleApi(req, res, url, user) {
     }
   }
 
-  if (req.method === 'GET' && url.pathname === '/api/companies') {
-    return json(res, 200, listCompanies());
+  if (url.pathname === '/api/companies') {
+    if (req.method === 'GET') return json(res, 200, listCompanies());
+    // Create a company before any of its jobs are tracked; body: { name,
+    // ...profile fields }. 409 when the name (case-insensitively) exists.
+    if (req.method === 'POST') {
+      if (!isAdmin) return forbidden(res);
+      const { name, ...fields } = await readBody(req);
+      try {
+        return json(res, 201, addCompany(name, fields));
+      } catch (err) {
+        return json(res, /already exists/.test(err.message) ? 409 : 400, { error: err.message });
+      }
+    }
   }
 
   // People: the candidates whose jobs are tracked. Each carries their own

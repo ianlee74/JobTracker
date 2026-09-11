@@ -39,6 +39,36 @@ export function normalizeSkills(text) {
 export const parseNames = parseSkills;
 export const normalizeNames = normalizeSkills;
 
+// Interview questions (companies.interview_questions) are stored one per
+// line. Accepts an array or newline-delimited text; trims, drops blanks and
+// list markers ("- ", "1. "), and dedupes case-insensitively.
+export function parseQuestions(value) {
+  const lines = Array.isArray(value) ? value : String(value || '').split(/\r?\n/);
+  const seen = new Set();
+  const out = [];
+  for (const raw of lines) {
+    const q = String(raw ?? '').trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim();
+    const key = q.toLowerCase();
+    if (!q || seen.has(key)) continue;
+    seen.add(key);
+    out.push(q);
+  }
+  return out;
+}
+
+export function normalizeQuestions(value) {
+  return parseQuestions(value).join('\n');
+}
+
+// Stock ticker symbols are stored upper-case without exchange prefixes or
+// decoration ("nasdaq: msft" → "MSFT"); anything that isn't a plausible symbol
+// is dropped rather than saved.
+export function normalizeTicker(value) {
+  const raw = String(value || '').trim().toUpperCase().replace(/^\$/, '');
+  const symbol = raw.includes(':') ? raw.slice(raw.lastIndexOf(':') + 1).trim() : raw;
+  return /^[A-Z0-9]{1,6}(?:[.-][A-Z0-9]{1,3})?$/.test(symbol) ? symbol : '';
+}
+
 export const LEVELS = ['Senior', 'Staff', 'Principal', 'Lead', 'Manager', 'Senior Manager', 'Director', 'Senior Director', 'VP', 'Executive', 'Other'];
 
 export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'Enterprise', 'Agency / Consultancy', 'Non-profit', 'Government', 'Other'];
@@ -397,6 +427,24 @@ if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
   }
 }
 
+// Migration: more company profile fields. ticker is the stock symbol of a
+// publicly traded company (the UI links it to Fidelity's research page);
+// gross_revenue is free text ("$245.1B (FY2024)") since sources report it in
+// every shape; interview_questions is a newline-delimited list of questions
+// to ask the company in an interview. All three are filled by company research.
+{
+  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  if (!cols.includes('ticker')) {
+    db.exec("ALTER TABLE companies ADD COLUMN ticker TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.includes('gross_revenue')) {
+    db.exec("ALTER TABLE companies ADD COLUMN gross_revenue TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.includes('interview_questions')) {
+    db.exec("ALTER TABLE companies ADD COLUMN interview_questions TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
 // numeric string (with $ and commas); anything else is an error, and an empty
 // value clears it.
@@ -695,6 +743,9 @@ export function deleteJob({ id, url, personId }) {
   return true;
 }
 
+// The shape of a company with no saved row yet: every profile field blank.
+const COMPANY_DEFAULTS = { website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0, favorite: 0 };
+
 // Every company referenced by a job (with defaults when it has no saved row)
 // plus any saved companies whose jobs are gone.
 export function listCompanies() {
@@ -703,7 +754,7 @@ export function listCompanies() {
   const counts = db.prepare('SELECT company, COUNT(*) AS n FROM jobs GROUP BY company').all();
   const result = [];
   for (const { company, n } of counts) {
-    result.push({ name: company, website: '', note: '', company_type: '', employee_count: '', referrals: '', not_interested: 0, favorite: 0, ...(byName.get(company) || {}), job_count: n });
+    result.push({ name: company, ...COMPANY_DEFAULTS, ...(byName.get(company) || {}), job_count: n });
     byName.delete(company);
   }
   for (const row of byName.values()) result.push({ ...row, job_count: 0 });
@@ -713,10 +764,10 @@ export function listCompanies() {
 export function getCompany(name) {
   const row = db.prepare('SELECT * FROM companies WHERE name = ?').get(name);
   const count = db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE company = ?').get(name);
-  return { name, website: '', note: '', company_type: '', employee_count: '', referrals: '', not_interested: 0, favorite: 0, ...(row || {}), job_count: count.n };
+  return { name, ...COMPANY_DEFAULTS, ...(row || {}), job_count: count.n };
 }
 
-const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'referrals', 'not_interested', 'favorite'];
+const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'ticker', 'gross_revenue', 'interview_questions', 'referrals', 'not_interested', 'favorite'];
 
 // Canonicalize a caller-supplied value against a preset list (case-insensitive);
 // values that don't match any preset are kept as given.
@@ -736,6 +787,10 @@ export function upsertCompany(name, fields) {
     const raw = Array.isArray(fields.referrals) ? fields.referrals.join(',') : fields.referrals;
     fields = { ...fields, referrals: normalizeNames(raw) };
   }
+  if ('ticker' in fields) fields = { ...fields, ticker: normalizeTicker(fields.ticker) };
+  if ('gross_revenue' in fields) fields = { ...fields, gross_revenue: String(fields.gross_revenue ?? '').trim() };
+  // interview_questions: an array or newline-delimited text; stored one per line.
+  if ('interview_questions' in fields) fields = { ...fields, interview_questions: normalizeQuestions(fields.interview_questions) };
   const updates = Object.entries(fields).filter(([k]) => COMPANY_FIELDS.includes(k));
   if (!db.prepare('SELECT 1 FROM companies WHERE name = ?').get(name)) {
     db.prepare('INSERT INTO companies (name) VALUES (?)').run(name);
@@ -755,6 +810,27 @@ export function addCompanyReferrals(name, names) {
   const current = getCompany(name).referrals;
   const merged = normalizeNames([current, ...(names || [])].join(','));
   return merged === current ? getCompany(name) : upsertCompany(name, { referrals: merged });
+}
+
+// Appends interview questions to a company's list (deduped case-insensitively,
+// existing order kept). Used by research, which adds to the list rather than
+// replacing questions a person wrote themselves.
+export function addCompanyInterviewQuestions(name, questions) {
+  const current = getCompany(name).interview_questions;
+  const merged = normalizeQuestions([...parseQuestions(current), ...parseQuestions(questions)]);
+  return merged === current ? getCompany(name) : upsertCompany(name, { interview_questions: merged });
+}
+
+// Creates a company that has no saved row and no tracked jobs yet, so it can
+// be browsed and researched before any posting mentions it. Names are matched
+// case-insensitively against saved rows and job companies, and the existing
+// spelling is reported, since jobs join to companies by exact name.
+export function addCompany(name, fields = {}) {
+  name = (name || '').trim();
+  if (!name) throw new Error('Company name is required');
+  const existing = listCompanies().find(c => c.name.toLowerCase() === name.toLowerCase());
+  if (existing) throw new Error(`Company "${existing.name}" already exists`);
+  return upsertCompany(name, fields);
 }
 
 // ---- Users & sessions (web authentication) ----

@@ -27,6 +27,16 @@ export const COMPANY_TYPES = ['Startup', 'Small Company', 'Mid-size Company', 'E
 
 export const EMPLOYEE_COUNTS = ['1-10', '11-50', '51-200', '201-500', '501-1,000', '1,001-5,000', '5,001-10,000', '10,000+'];
 
+// A company's interview questions are stored one per line.
+export function parseQuestions(text) {
+  return String(text || '').split(/\r?\n/).map(q => q.trim()).filter(Boolean);
+}
+
+// Fidelity's research dashboard for a stock ticker symbol.
+export function tickerHref(ticker) {
+  return `https://digital.fidelity.com/prgw/digital/research/quote/dashboard/summary?symbol=${encodeURIComponent(ticker)}`;
+}
+
 // Whole-dollar amount as "$200,000".
 export function formatDollars(n) {
   return '$' + Number(n).toLocaleString('en-US');

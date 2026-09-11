@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, addPerson, addJob, updateJob, deleteJob, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobForm, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
+import CompaniesPage from './CompaniesPage.jsx';
 import SettingsDialog from './SettingsDialog.jsx';
 import UsersDialog from './UsersDialog.jsx';
 import GenerateDialog from './GenerateDialog.jsx';
@@ -245,6 +246,9 @@ export default function App() {
     return Number.isInteger(saved) && saved > 0 ? saved : null;
   });
   const [addPersonOpen, setAddPersonOpen] = useState(false);
+  // The main view: the job list or the companies list. A company page opens
+  // on top of either and goes back to it.
+  const [view, setView] = useState('jobs'); // jobs | companies
   const [activeCompany, setActiveCompany] = useState(null);
   const [savedFilters] = useState(loadSavedFilters);
   const [showNotInterested, setShowNotInterested] = useState(savedFilters.showNotInterested);
@@ -492,6 +496,23 @@ export default function App() {
     }
   };
 
+  // A company added from the companies page opens straight away, so its
+  // profile can be filled in or researched. Errors surface in the form.
+  const handleAddCompany = async (fields) => {
+    const company = await addCompany(fields);
+    setCompanies(prev => [...prev.filter(c => c.name !== company.name), company].sort((a, b) => a.name.localeCompare(b.name)));
+    setActiveCompany(company.name);
+    flashSaved();
+  };
+
+  const showView = (next) => {
+    setActiveCompany(null);
+    setView(next);
+  };
+
+  // The job list is showing (no company page on top, companies view not selected).
+  const jobsView = view === 'jobs' && !activeCompany;
+
   const toggleStatus = (s) => {
     setStatusFilters(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
   };
@@ -597,6 +618,26 @@ export default function App() {
         </div>
         <div className="header-right">
           <div className={`saved-flash ${savedFlash ? 'visible' : ''}`}>✓ Saved</div>
+          <div className="view-switch" role="tablist" aria-label="View">
+            <button
+              role="tab"
+              aria-selected={view === 'jobs'}
+              className={view === 'jobs' ? 'active' : ''}
+              onClick={() => showView('jobs')}
+              title="The tracked jobs"
+            >
+              Jobs
+            </button>
+            <button
+              role="tab"
+              aria-selected={view === 'companies'}
+              className={view === 'companies' ? 'active' : ''}
+              onClick={() => showView('companies')}
+              title="Browse every company, with or without tracked jobs"
+            >
+              Companies
+            </button>
+          </div>
           {isAdmin && people.length > 0 && (
             <select
               className="person-select"
@@ -608,7 +649,7 @@ export default function App() {
               <option value="__add__">＋ Add person…</option>
             </select>
           )}
-          {isAdmin && !activeCompany && (
+          {isAdmin && jobsView && (
             <button
               className="clear-btn generate-all-btn"
               onClick={() => window.open(`/api/interested-email/preview?person=${personId}`, '_blank')}
@@ -618,7 +659,7 @@ export default function App() {
               ✉ Email Interested
             </button>
           )}
-          {!activeCompany && <AddJobForm jobs={jobs} companies={companies} knownSkills={skillOptions} onAdd={handleAdd} />}
+          {jobsView && <AddJobForm jobs={jobs} companies={companies} knownSkills={skillOptions} onAdd={handleAdd} />}
           {isAdmin && user.auth_enabled && (
             <button className="clear-btn settings-btn" onClick={() => setUsersOpen(true)} title="Manage users">👥</button>
           )}
@@ -647,16 +688,28 @@ export default function App() {
         <CompanyPage
           company={
             companies.find(c => c.name === activeCompany)
-            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', referrals: '', not_interested: 0 }
+            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0 }
           }
           jobs={jobs.filter(j => j.company === activeCompany)}
           onBack={() => setActiveCompany(null)}
+          backLabel={view === 'companies' ? 'Back to companies' : 'Back to jobs'}
           onSave={(fields) => handleCompanySave(activeCompany, fields)}
           isAdmin={isAdmin}
         />
       )}
 
-      {!activeCompany && stats && (
+      {view === 'companies' && !activeCompany && (
+        <CompaniesPage
+          companies={companies}
+          jobs={jobs}
+          isAdmin={isAdmin}
+          onOpenCompany={setActiveCompany}
+          onAdd={handleAddCompany}
+          onSave={handleCompanySave}
+        />
+      )}
+
+      {jobsView && stats && (
         <div className="tiles">
           {STATUSES.map(s => (
             <button
@@ -672,7 +725,7 @@ export default function App() {
         </div>
       )}
 
-      {!activeCompany && (
+      {jobsView && (
       <div className="controls">
         <FilterFlyout
           statusFilters={statusFilters}
@@ -722,7 +775,7 @@ export default function App() {
       </div>
       )}
 
-      {!activeCompany && (
+      {jobsView && (
       <JobTable
         jobs={visibleJobs}
         sort={sort}
