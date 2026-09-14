@@ -352,28 +352,33 @@ function ReferredBy({ job, referrals, onUpdate }) {
 }
 
 const DOC_LABELS = { resume: 'Resume', cover_letter: 'Cover letter' };
+const DOC_KINDS = ['resume', 'cover_letter'];
+const DOC_ACCEPT = '.docx,.pdf,.md,.txt,.html';
 
-// One document's control: clicking the name opens a small menu with
-// Download, Upload replacement, and Delete. Delete removes just this
-// document, freeing ✨ to regenerate it. (There is deliberately no "Open":
-// generated documents are .docx, which browsers can't display inline, so it
-// would only ever be a second Download.)
-function DocMenu({ job, kind, onUpload, onDelete }) {
-  // null = closed; when open, the fixed-position coordinates of the menu.
-  // Fixed positioning escapes the table wrapper's scroll clipping, which
-  // would otherwise cut the menu off on the last rows.
+// A small popup menu anchored to a button. Returns the menu's position
+// (null while closed), a toggle, and a close function; the caller renders
+// the menu with style={menuPos} inside an element carrying wrapRef.
+// Fixed positioning escapes the table wrapper's scroll clipping, which
+// would otherwise cut the menu off on the last rows.
+function usePopupMenu(wrapRef) {
   const [menuPos, setMenuPos] = useState(null);
   const open = menuPos !== null;
-  const wrapRef = useRef(null);
-  const fileInput = useRef(null);
-  const label = DOC_LABELS[kind] || kind;
 
   const toggle = () => {
     if (open) return setMenuPos(null);
     const r = wrapRef.current.getBoundingClientRect();
-    // Open upward when there's no room below the button.
-    const flip = r.bottom + 150 > window.innerHeight;
-    setMenuPos({ left: r.left, ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) });
+    // Open upward when there's no room below the button, and right-aligned
+    // to it when there's no room to the right (the actions column sits at the
+    // table's edge).
+    // (clientWidth/Height exclude the scrollbars, which fixed positioning
+    // also excludes; window.inner* would leave the menu short by that much.)
+    const { clientWidth: vw, clientHeight: vh } = document.documentElement;
+    const flip = r.bottom + 150 > vh;
+    const alignRight = r.left + 200 > vw;
+    setMenuPos({
+      ...(alignRight ? { right: vw - r.right } : { left: r.left }),
+      ...(flip ? { bottom: vh - r.top + 4 } : { top: r.bottom + 4 })
+    });
   };
 
   useEffect(() => {
@@ -392,9 +397,21 @@ function DocMenu({ job, kind, onUpload, onDelete }) {
       window.removeEventListener('scroll', closeNow, true);
       window.removeEventListener('resize', closeNow);
     };
-  }, [open]);
+  }, [open, wrapRef]);
 
-  const closeMenu = () => setMenuPos(null);
+  return { menuPos, open, toggle, close: () => setMenuPos(null) };
+}
+
+// One document's control: clicking the name opens a small menu with
+// Download, Upload replacement, and Delete. Delete removes just this
+// document, freeing ✨ to regenerate it. (There is deliberately no "Open":
+// generated documents are .docx, which browsers can't display inline, so it
+// would only ever be a second Download.)
+function DocMenu({ job, kind, onUpload, onDelete }) {
+  const wrapRef = useRef(null);
+  const fileInput = useRef(null);
+  const { menuPos, open, toggle, close: closeMenu } = usePopupMenu(wrapRef);
+  const label = DOC_LABELS[kind] || kind;
 
   return (
     <span className="doc-menu-wrap" ref={wrapRef}>
@@ -435,7 +452,7 @@ function DocMenu({ job, kind, onUpload, onDelete }) {
         ref={fileInput}
         type="file"
         hidden
-        accept=".docx,.pdf,.md,.txt,.html"
+        accept={DOC_ACCEPT}
         onChange={e => {
           const file = e.target.files[0];
           if (file) onUpload(job, kind, file);
@@ -445,11 +462,66 @@ function DocMenu({ job, kind, onUpload, onDelete }) {
   );
 }
 
+// The 📎 action: attach your own resume or cover letter to a job instead of
+// having Claude generate it. Opens a menu with one entry per document kind;
+// a kind the job already has is offered as a replacement, so this is also a
+// second route to "Upload replacement…" in that document's menu.
+function UploadDocButton({ job, docKinds, disabled, onUpload }) {
+  const wrapRef = useRef(null);
+  const inputs = useRef({});
+  const { menuPos, open, toggle, close: closeMenu } = usePopupMenu(wrapRef);
+
+  return (
+    <span className="doc-menu-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className="edit-btn"
+        title="Upload your own resume or cover letter for this job"
+        disabled={disabled}
+        onClick={toggle}
+      >
+        📎
+      </button>
+      {open && (
+        <div className="doc-menu" style={menuPos}>
+          {DOC_KINDS.map(kind => (
+            <button
+              key={kind}
+              type="button"
+              className="doc-menu-item"
+              onClick={() => {
+                closeMenu();
+                const input = inputs.current[kind];
+                input.value = ''; // re-selecting the same file still fires change
+                input.click();
+              }}
+            >
+              {docKinds.includes(kind) ? 'Replace' : 'Upload'} {DOC_LABELS[kind].toLowerCase()}…
+            </button>
+          ))}
+        </div>
+      )}
+      {DOC_KINDS.map(kind => (
+        <input
+          key={kind}
+          ref={el => { inputs.current[kind] = el; }}
+          type="file"
+          hidden
+          accept={DOC_ACCEPT}
+          onChange={e => {
+            const file = e.target.files[0];
+            if (file) onUpload(job, kind, file);
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
 // A menu per generated document once any exist for a job.
 function DocLinks({ job, onUpload, onDelete }) {
-  const ORDER = ['resume', 'cover_letter'];
   const kinds = (job.doc_kinds || '').split(',').filter(Boolean)
-    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+    .sort((a, b) => DOC_KINDS.indexOf(a) - DOC_KINDS.indexOf(b));
   if (!kinds.length) return null;
   return (
     <div className="doc-links">
@@ -483,7 +555,7 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
   const salaryRange = formatSalaryRange(job);
   const span = wide ? 2 : undefined;
   const docKinds = (job.doc_kinds || '').split(',').filter(Boolean);
-  const missingDocs = ['resume', 'cover_letter'].filter(k => !docKinds.includes(k));
+  const missingDocs = DOC_KINDS.filter(k => !docKinds.includes(k));
 
   const mainRow = (
     <tr className={wide ? 'main-row' : undefined}>
@@ -559,6 +631,7 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
         >
           {generating ? '⏳' : '✨'}
         </button>
+        <UploadDocButton job={job} docKinds={docKinds} disabled={generating} onUpload={onUploadDocument} />
         {isAdmin && (
           <button
             className="edit-btn"

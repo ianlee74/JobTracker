@@ -443,12 +443,19 @@ export default function App() {
     } catch { /* sync is best-effort */ }
   };
 
-  // Replace a job's generated resume/cover letter with a hand-customized file
-  // picked via "Upload replacement…" in its document menu.
+  // Attach a hand-made resume/cover letter to a job — a first upload via the
+  // row's 📎 menu, or a replacement of a generated one via "Upload
+  // replacement…" in that document's menu.
   const handleUploadDocument = async (job, kind, file) => {
     setError(null);
     try {
       await uploadJobDocument(job.id, kind, file);
+      setJobs(prev => prev.map(j => {
+        if (j.id !== job.id) return j;
+        const kinds = new Set((j.doc_kinds || '').split(',').filter(Boolean));
+        kinds.add(kind);
+        return { ...j, doc_kinds: [...kinds].join(',') };
+      }));
       flashSaved();
     } catch (err) {
       setError(`${job.title} (${job.company}): ${err.message}`);
