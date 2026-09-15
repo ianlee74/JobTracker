@@ -46,6 +46,9 @@ const COMPARATORS = {
   }
 };
 
+// Closed-out statuses stay in the Filters drop-down but get no summary tile at the top of the page.
+const TILE_STATUSES = STATUSES.filter(s => s !== 'Not Moving Forward' && s !== 'No Longer Available');
+
 const FILTERS_STORAGE_KEY = 'jobtracker.viewFilters';
 const PERSON_STORAGE_KEY = 'jobtracker.person';
 
@@ -724,7 +727,7 @@ export default function App() {
 
       {jobsView && stats && (
         <div className="tiles">
-          {STATUSES.map(s => (
+          {TILE_STATUSES.map(s => (
             <button
               key={s}
               className={`tile ${statusFilters.includes(s) ? 'active' : ''}`}
