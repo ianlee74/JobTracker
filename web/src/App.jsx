@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, fetchContacts, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, addContact, updateContact, deleteContact, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobPage, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
 import CompaniesPage from './CompaniesPage.jsx';
+import ContactsPage from './ContactsPage.jsx';
+import InterviewsPage from './InterviewsPage.jsx';
 import SettingsDialog from './SettingsDialog.jsx';
 import UsersDialog from './UsersDialog.jsx';
 import GenerateDialog from './GenerateDialog.jsx';
@@ -241,6 +243,9 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [stats, setStats] = useState(null);
   const [companies, setCompanies] = useState([]);
+  // Everyone the candidate deals with (recruiters, interviewers); shared
+  // across people like companies are.
+  const [contacts, setContacts] = useState([]);
   const [people, setPeople] = useState([]);
   // The selected candidate; everything below (jobs, tiles, settings) is scoped
   // to them. null until the people list first loads.
@@ -249,12 +254,15 @@ export default function App() {
     return Number.isInteger(saved) && saved > 0 ? saved : null;
   });
   const [addPersonOpen, setAddPersonOpen] = useState(false);
-  // The main view: the job list or the companies list. A company page opens
-  // on top of either and goes back to it.
-  const [view, setView] = useState('jobs'); // jobs | companies
+  // The main view: the job list, the companies list, or the contacts list. A
+  // company page opens on top of any of them and goes back to it.
+  const [view, setView] = useState('jobs'); // jobs | companies | contacts
   const [activeCompany, setActiveCompany] = useState(null);
   // The "Add a job" page replaces the job list until the job is added or cancelled.
   const [addingJob, setAddingJob] = useState(false);
+  // The Interviews page for one job (🎤 on its row) replaces the job list
+  // until Back; a company page can open on top of it.
+  const [interviewJobId, setInterviewJobId] = useState(null);
   // Whether the server has Anthropic credentials (shows the Claude-backed
   // actions in the job form).
   const [aiReady, setAiReady] = useState(false);
@@ -293,11 +301,12 @@ export default function App() {
         pid = peopleData[0]?.id ?? null;
         setPersonId(pid);
       }
-      const [jobsData, statsData, companiesData, skillsData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies(pid), fetchMissingSkills()]);
+      const [jobsData, statsData, companiesData, skillsData, contactsData] = await Promise.all([fetchJobs(pid), fetchStats(pid), fetchCompanies(pid), fetchMissingSkills(), fetchContacts()]);
       setJobs(jobsData);
       setStats(statsData);
       setCompanies(companiesData);
       setKnownSkills(skillsData);
+      setContacts(contactsData);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -524,14 +533,50 @@ export default function App() {
     flashSaved();
   };
 
+  // Contacts: shared like companies; errors surface in the form that made
+  // the change (they propagate), except deletes, which report in the banner.
+  const refreshContacts = async () => {
+    try {
+      setContacts(await fetchContacts());
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const handleAddContact = async (fields) => {
+    const contact = await addContact(fields);
+    setContacts(prev => [...prev, contact].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })));
+    flashSaved();
+  };
+  const handleSaveContact = async (id, fields) => {
+    const contact = await updateContact(id, fields);
+    setContacts(prev => prev.map(c => (c.id === id ? contact : c)).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })));
+    flashSaved();
+  };
+  const handleDeleteContact = async (id) => {
+    try {
+      await deleteContact(id);
+      setContacts(prev => prev.filter(c => c.id !== id));
+      flashSaved();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const showView = (next) => {
     setActiveCompany(null);
     setAddingJob(false);
+    setInterviewJobId(null);
     setView(next);
   };
 
-  // The job list is showing (no company page or add-job page on top, companies view not selected).
-  const jobsView = view === 'jobs' && !activeCompany && !addingJob;
+  // Leaving the Interviews page: the job list's interview counts may have changed.
+  const closeInterviews = () => {
+    setInterviewJobId(null);
+    refresh();
+  };
+
+  // The job list is showing (no company, add-job or interviews page on top, companies view not selected).
+  const jobsView = view === 'jobs' && !activeCompany && !addingJob && interviewJobId == null;
   // Named in the company pages, since favorite / not-interested are theirs.
   const personName = people.find(p => p.id === personId)?.name;
 
@@ -661,6 +706,15 @@ export default function App() {
             >
               Companies
             </button>
+            <button
+              role="tab"
+              aria-selected={view === 'contacts'}
+              className={view === 'contacts' ? 'active' : ''}
+              onClick={() => showView('contacts')}
+              title="Recruiters, hiring managers and interviewers you've met"
+            >
+              Contacts
+            </button>
           </div>
           {isAdmin && people.length > 0 && (
             <select
@@ -712,6 +766,18 @@ export default function App() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      {view === 'jobs' && !activeCompany && !addingJob && interviewJobId != null && (
+        <InterviewsPage
+          jobId={interviewJobId}
+          contacts={contacts}
+          companies={companies}
+          canGenerate={aiReady}
+          onBack={closeInterviews}
+          onOpenCompany={setActiveCompany}
+          onContactsChanged={refreshContacts}
+        />
+      )}
+
       {view === 'jobs' && !activeCompany && addingJob && (
         <AddJobPage
           jobs={jobs}
@@ -731,9 +797,10 @@ export default function App() {
             || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0, favorite: 0 }
           }
           jobs={jobs.filter(j => j.company === activeCompany)}
+          contacts={contacts.filter(c => c.company.toLowerCase() === activeCompany.toLowerCase())}
           personName={personName}
           onBack={() => setActiveCompany(null)}
-          backLabel={view === 'companies' ? 'Back to companies' : 'Back to jobs'}
+          backLabel={view === 'companies' ? 'Back to companies' : view === 'contacts' ? 'Back to contacts' : interviewJobId != null ? 'Back to interviews' : 'Back to jobs'}
           onSave={(fields) => handleCompanySave(activeCompany, fields)}
           isAdmin={isAdmin}
         />
@@ -748,6 +815,18 @@ export default function App() {
           onOpenCompany={setActiveCompany}
           onAdd={handleAddCompany}
           onSave={handleCompanySave}
+        />
+      )}
+
+      {view === 'contacts' && !activeCompany && (
+        <ContactsPage
+          contacts={contacts}
+          companies={companies}
+          isAdmin={isAdmin}
+          onAdd={handleAddContact}
+          onSave={handleSaveContact}
+          onDelete={handleDeleteContact}
+          onOpenCompany={setActiveCompany}
         />
       )}
 
@@ -829,6 +908,7 @@ export default function App() {
         onDelete={handleDelete}
         onEdit={setEditingJob}
         onOpenCompany={setActiveCompany}
+        onOpenInterviews={(job) => setInterviewJobId(job.id)}
         onGenerate={setGenerateFor}
         onUploadDocument={handleUploadDocument}
         onDeleteDocuments={handleDeleteDocuments}

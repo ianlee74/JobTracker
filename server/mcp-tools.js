@@ -1,9 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, addCompany, upsertCompany, addCompanyReferrals, addCompanyInterviewQuestions, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
+import { listJobs, getJob, addJobs, updateJob, deleteJob, getStats, listCompanies, getCompany, addCompany, upsertCompany, addCompanyReferrals, addCompanyInterviewQuestions, listPeople, getPerson, findPersonByName, onlyPerson, addPerson, updatePerson, listContacts, getContact, findContact, addContact, updateContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, STATUSES, LEVELS, REJECTION_REASONS, COMPANY_TYPES, EMPLOYEE_COUNTS, INTERVIEW_TYPES } from './db.js';
 import { generateJobDocuments, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany } from './research.js';
+import { generateInterviewQuestions } from './interview.js';
 
 // Registers every JobTracker tool on a fresh McpServer. Shared between the
 // stdio entry point (mcp-server.js, local dev) and the remote /mcp endpoint
@@ -308,6 +309,169 @@ server.registerTool('configure_document_generation', {
     api_credentials_found: await hasApiCredentials()
   });
 });
+
+// ---- Contacts ----
+
+const CONTACT_SCHEMA = {
+  title: z.string().optional().describe('Their job title / role, e.g. "Senior Technical Recruiter"'),
+  company: z.string().optional().describe('The company they work for, spelled as it appears on its jobs'),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  linkedin: z.string().optional().describe('LinkedIn profile URL'),
+  note: z.string().optional().describe('Anything worth remembering about them')
+};
+
+server.registerTool('list_contacts', {
+  title: 'List contacts',
+  description: 'List the contacts the candidate has met or will meet — recruiters, hiring managers, interviewers — with title, company, email, phone, LinkedIn, note, and how many interviews each has attended. Optionally filtered by company or free text.',
+  inputSchema: {
+    company: z.string().optional().describe('Only contacts at this company (exact name, case-insensitive)'),
+    q: z.string().optional().describe('Free-text search across name, title, company, email and note')
+  }
+}, async (args) => ok(listContacts(args)));
+
+server.registerTool('add_contact', {
+  title: 'Add a contact',
+  description: 'Add a person the candidate deals with during a job search (a recruiter, hiring manager, interviewer). Fails if a contact with the same name at the same company already exists — use update_contact for them. Contacts are attached to interviews as attendees (add_interview / update_interview accept attendee names and create missing contacts for you).',
+  inputSchema: {
+    name: z.string().describe('Full name'),
+    ...CONTACT_SCHEMA
+  }
+}, async (fields) => ok(addContact(fields)));
+
+server.registerTool('update_contact', {
+  title: 'Update a contact',
+  description: 'Change a contact\'s details. Identify them by id, or by name (plus company when the name is ambiguous).',
+  inputSchema: {
+    id: z.number().int().optional().describe('Contact id'),
+    name: z.string().optional().describe('Current name (alternative to id)'),
+    company: z.string().optional().describe('With name: the company that disambiguates them; also the new company value'),
+    new_name: z.string().optional().describe('Rename the contact'),
+    ...CONTACT_SCHEMA
+  }
+}, async ({ id, name, new_name, ...fields }) => {
+  const contact = id != null ? getContact(id) : findContact(name, fields.company);
+  if (!contact) throw new Error('Contact not found');
+  if (new_name !== undefined) fields.name = new_name;
+  return ok(updateContact(contact.id, fields));
+});
+
+// ---- Interviews ----
+
+// Resolves a job argument (id, or url + optional person) to the job row.
+function resolveJob({ job_id, url, person }) {
+  if (job_id == null && !url) throw new Error('Provide job_id or url to identify the job');
+  const job = getJob({ id: job_id, url, personId: person ? resolvePerson(person).id : undefined });
+  if (!job) throw new Error('Job not found');
+  return job;
+}
+
+// Attendees named in add_interview / update_interview: an existing contact
+// by name (preferring one at the job's company), else a new contact at the
+// job's company.
+function attachAttendees(interview, job, names) {
+  for (const raw of names || []) {
+    const name = String(raw ?? '').trim();
+    if (!name) continue;
+    const contact = findContact(name, job.company) || addContact({ name, company: job.company });
+    addInterviewAttendee(interview.id, contact.id);
+  }
+}
+
+const interviewFields = {
+  type: z.string().optional().describe(`Kind of interview, ideally one of: ${INTERVIEW_TYPES.join(', ')} — or free text`),
+  scheduled_at: z.string().optional().describe('When it takes place, as "YYYY-MM-DDTHH:MM" (local time) or "YYYY-MM-DD"; empty string clears it'),
+  notes: z.string().optional().describe('The candidate\'s prep and live notes for this interview, in Markdown. REPLACES the existing notes — use append_notes to add to them.')
+};
+
+server.registerTool('list_interviews', {
+  title: 'List a job\'s interviews',
+  description: 'List the interviews scheduled or held for one job, in time order, each with its type, when, attendees (contacts), Markdown notes, and Q&A: the questions the candidate planned to ask (question, answer recorded during the interview, source: user / claude / company).',
+  inputSchema: {
+    job_id: z.number().int().optional().describe('Job id'),
+    url: z.string().optional().describe('Job posting URL (alternative to job_id)'),
+    person: z.string().optional().describe('Disambiguates a URL lookup — the person\'s name (or numeric id)')
+  }
+}, async (args) => ok(listInterviews(resolveJob(args).id)));
+
+server.registerTool('add_interview', {
+  title: 'Add an interview',
+  description: 'Record an interview for a job (a job can have several: recruiter screen, technical, hiring manager, ...). Consider also setting the job\'s status to "Interviewing" with update_job if it is not already. Attendees are matched to existing contacts by name (at the job\'s company first) or created as new contacts at the job\'s company.',
+  inputSchema: {
+    job_id: z.number().int().optional().describe('Job id'),
+    url: z.string().optional().describe('Job posting URL (alternative to job_id)'),
+    person: z.string().optional().describe('Disambiguates a URL lookup — the person\'s name (or numeric id)'),
+    ...interviewFields,
+    attendees: z.array(z.string()).optional().describe('Names of the people attending (interviewers, recruiter)'),
+    questions: z.array(z.string()).optional().describe('Questions the candidate plans to ask in this interview')
+  }
+}, async ({ job_id, url, person, attendees, questions, ...fields }) => {
+  const job = resolveJob({ job_id, url, person });
+  const interview = addInterview(job.id, fields);
+  attachAttendees(interview, job, attendees);
+  if (questions?.length) addInterviewQuestions(interview.id, questions);
+  return ok(getInterview(interview.id));
+});
+
+server.registerTool('update_interview', {
+  title: 'Update an interview',
+  description: 'Change an interview\'s type, time or notes; add or remove attendees; add questions to its Q&A or record the answers received; remove questions. Follow the interview-questions skill (skills/interview-questions/SKILL.md) when preparing questions yourself.',
+  inputSchema: {
+    id: z.number().int().describe('Interview id (from list_interviews)'),
+    ...interviewFields,
+    append_notes: z.string().optional().describe('Appended to the existing notes after a blank line instead of replacing them'),
+    add_attendees: z.array(z.string()).optional().describe('Names to add as attendees (existing contacts matched by name, else created at the job\'s company)'),
+    remove_attendees: z.array(z.string()).optional().describe('Names of attendees to remove from this interview (the contacts themselves are kept)'),
+    add_questions: z.array(z.string()).optional().describe('Questions to append to this interview\'s Q&A (duplicates ignored case-insensitively)'),
+    answers: z.array(z.object({
+      question_id: z.number().int().optional().describe('The question\'s id (from list_interviews)'),
+      question: z.string().optional().describe('Or the question\'s exact text'),
+      answer: z.string().describe('The answer received (empty string clears it)')
+    })).optional().describe('Record what the interviewers answered for existing questions'),
+    remove_question_ids: z.array(z.number().int()).optional().describe('Ids of questions to delete from this interview')
+  }
+}, async ({ id, append_notes, add_attendees, remove_attendees, add_questions, answers, remove_question_ids, ...fields }) => {
+  let interview = getInterview(id);
+  if (!interview) throw new Error('Interview not found');
+  const job = getJob({ id: interview.job_id });
+  if (append_notes) {
+    const existing = fields.notes ?? interview.notes;
+    fields.notes = existing ? `${existing}\n\n${append_notes}` : append_notes;
+  }
+  updateInterview(id, fields);
+  attachAttendees(interview, job, add_attendees);
+  for (const raw of remove_attendees || []) {
+    const match = interview.attendees.find(c => c.name.toLowerCase() === String(raw).trim().toLowerCase());
+    if (match) removeInterviewAttendee(id, match.id);
+  }
+  if (add_questions?.length) addInterviewQuestions(id, add_questions);
+  for (const a of answers || []) {
+    const q = a.question_id != null
+      ? interview.questions.find(q => q.id === a.question_id)
+      : interview.questions.find(q => q.question.toLowerCase() === String(a.question ?? '').trim().toLowerCase());
+    if (!q) throw new Error(`No such question on this interview: ${a.question_id ?? a.question}`);
+    updateInterviewQuestion(q.id, { answer: a.answer });
+  }
+  for (const qid of remove_question_ids || []) {
+    if (interview.questions.some(q => q.id === qid)) deleteInterviewQuestion(qid);
+  }
+  return ok(getInterview(id));
+});
+
+server.registerTool('delete_interview', {
+  title: 'Delete an interview',
+  description: 'Remove an interview record (its attendees list and Q&A go with it; the contacts stay).',
+  inputSchema: { id: z.number().int().describe('Interview id') }
+}, async ({ id }) => {
+  if (!deleteInterview(id)) throw new Error('Interview not found');
+  return ok({ deleted: true });
+});
+
+server.registerTool('generate_interview_questions', {
+  title: 'Propose questions for an interview',
+  description: 'Have the JobTracker server propose the questions the candidate should ask in one interview, through the Anthropic API (web search), following the interview-questions skill: grounded in the posting, the company profile, the interview\'s type and attendees, and what earlier interviews for the job already covered. Returns { questions: [{ question, why, topic }], sources } without saving anything; save the ones the candidate wants with update_interview add_questions. Slow: allow a minute or two. If you can search the web yourself, following skills/interview-questions/SKILL.md directly is equivalent.',
+  inputSchema: { id: z.number().int().describe('Interview id (from list_interviews)') }
+}, async ({ id }) => ok(await generateInterviewQuestions(id)));
 
 server.registerTool('get_summary', {
   title: 'Get summary',

@@ -96,7 +96,7 @@ function PresetSelect({ value, options, placeholder, onChange }) {
 // the other is set, and the returned company reflects that), and the tracked
 // jobs. Changes save automatically. `backLabel` names the view the page was
 // opened from.
-export default function CompanyPage({ company, jobs, personName, onBack, backLabel = 'Back to jobs', onSave, isAdmin = true }) {
+export default function CompanyPage({ company, jobs, contacts = [], personName, onBack, backLabel = 'Back to jobs', onSave, isAdmin = true }) {
   const who = personName ? ` for ${personName}` : '';
   const [website, setWebsite] = useState(company.website || '');
   const [ticker, setTicker] = useState(company.ticker || '');
@@ -376,6 +376,23 @@ export default function CompanyPage({ company, jobs, personName, onBack, backLab
           </div>
         )}
       </div>
+
+      {contacts.length > 0 && (
+        <div className="company-card company-contacts">
+          <div className="company-jobs-title">Contacts</div>
+          <ul className="company-contact-list">
+            {contacts.map(c => (
+              <li key={c.id}>
+                <strong>{c.name}</strong>
+                {c.title && <span className="hint"> · {c.title}</span>}
+                {c.email && <> · <a href={`mailto:${c.email}`}>{c.email}</a></>}
+                {c.linkedin && <> · <a href={c.linkedin} target="_blank" rel="noopener noreferrer">LinkedIn ↗</a></>}
+                {c.interview_count > 0 && <span className="hint"> · {c.interview_count} interview{c.interview_count === 1 ? '' : 's'}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="company-jobs">
         <div className="company-jobs-title">

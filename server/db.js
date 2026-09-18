@@ -474,6 +474,56 @@ db.exec(`
   db.prepare('UPDATE company_flags SET favorite = 0 WHERE favorite = 1 AND not_interested = 1').run();
 }
 
+// Migration: interviews and contacts. A job can have several interviews
+// (interviews: type, when, the candidate's Markdown notes), each attended by
+// contacts (contacts: the recruiters, hiring managers and interviewers the
+// candidate meets, kept once and reused; interview_attendees links them) and
+// carrying its own Q&A (interview_questions: the questions the candidate
+// plans to ask, in display order, with the answer they got; source records
+// whether a question was typed, proposed by Claude, or copied from the
+// company's list).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    linkedin TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company);
+  CREATE TABLE IF NOT EXISTS interviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    type TEXT NOT NULL DEFAULT '',
+    scheduled_at TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_interviews_job ON interviews(job_id);
+  CREATE TABLE IF NOT EXISTS interview_attendees (
+    interview_id INTEGER NOT NULL,
+    contact_id INTEGER NOT NULL,
+    PRIMARY KEY (interview_id, contact_id)
+  );
+  CREATE TABLE IF NOT EXISTS interview_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interview_id INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'user',
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_interview_questions_interview ON interview_questions(interview_id, position);
+`);
+
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
 // numeric string (with $ and commas); anything else is an error, and an empty
 // value clears it.
@@ -596,8 +646,11 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
   // doc_kinds: comma-joined kinds of generated documents ("resume,cover_letter")
   // so callers know what exists without a second query. person_name saves a
   // lookup when listing across people.
+  // interview_count lets the UI offer the Interviews page on a job that has
+  // moved past Interviewing but still has its interview records.
   let sql = `SELECT jobs.*,
     (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = jobs.id) AS doc_kinds,
+    (SELECT COUNT(*) FROM interviews i WHERE i.job_id = jobs.id) AS interview_count,
     (SELECT name FROM people WHERE people.id = jobs.person_id) AS person_name
     FROM jobs`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
@@ -771,7 +824,246 @@ export function deleteJob({ id, url, personId }) {
   db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id);
   // Document rows go with the job; the files themselves are left on disk.
   db.prepare('DELETE FROM job_documents WHERE job_id = ?').run(job.id);
+  for (const interview of db.prepare('SELECT id FROM interviews WHERE job_id = ?').all(job.id)) deleteInterview(interview.id);
   return true;
+}
+
+// ---- Contacts ----
+//
+// People the candidate meets along the way — recruiters, hiring managers,
+// interviewers — kept once and reused as the attendees of interviews.
+// Contacts are shared (like companies), linked to a company by its name.
+
+export const CONTACT_FIELDS = ['name', 'title', 'company', 'email', 'phone', 'linkedin', 'note'];
+
+function contactFields(fields) {
+  const out = {};
+  for (const key of CONTACT_FIELDS) {
+    if (key in fields) out[key] = String(fields[key] ?? '').trim();
+  }
+  return out;
+}
+
+// interview_count: how many interviews the contact has attended, so the
+// contacts page can show who the candidate has actually met.
+const CONTACT_SELECT = `SELECT contacts.*,
+  (SELECT COUNT(*) FROM interview_attendees a WHERE a.contact_id = contacts.id) AS interview_count
+  FROM contacts`;
+
+export function listContacts({ company, q } = {}) {
+  const where = [];
+  const params = [];
+  if (company) { where.push('company = ? COLLATE NOCASE'); params.push(company); }
+  if (q) {
+    where.push('(name LIKE ? OR title LIKE ? OR company LIKE ? OR email LIKE ? OR note LIKE ?)');
+    const like = `%${q}%`;
+    params.push(like, like, like, like, like);
+  }
+  return db.prepare(`${CONTACT_SELECT}${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY name COLLATE NOCASE, id`).all(...params);
+}
+
+export function getContact(id) {
+  return db.prepare(`${CONTACT_SELECT} WHERE id = ?`).get(id) ?? null;
+}
+
+// A contact by name (case-insensitive), preferring one at the given company;
+// used to reuse an existing contact when an attendee is named.
+export function findContact(name, company) {
+  name = String(name ?? '').trim();
+  if (!name) return null;
+  const rows = db.prepare('SELECT * FROM contacts WHERE name = ? COLLATE NOCASE ORDER BY id').all(name);
+  if (company) {
+    const same = rows.find(r => r.company.toLowerCase() === String(company).trim().toLowerCase());
+    if (same) return getContact(same.id);
+  }
+  return rows.length ? getContact(rows[0].id) : null;
+}
+
+export function addContact(fields) {
+  const values = { title: '', company: '', email: '', phone: '', linkedin: '', note: '', ...contactFields(fields) };
+  if (!values.name) throw new Error('Contact name is required');
+  const dupe = db.prepare('SELECT id FROM contacts WHERE name = ? COLLATE NOCASE AND company = ? COLLATE NOCASE').get(values.name, values.company);
+  if (dupe) throw new Error(`A contact named "${values.name}"${values.company ? ` at ${values.company}` : ''} already exists`);
+  const info = db.prepare('INSERT INTO contacts (name, title, company, email, phone, linkedin, note) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(values.name, values.title, values.company, values.email, values.phone, values.linkedin, values.note);
+  return getContact(info.lastInsertRowid);
+}
+
+export function updateContact(id, fields) {
+  const contact = getContact(id);
+  if (!contact) return null;
+  const values = contactFields(fields);
+  if ('name' in values && !values.name) throw new Error('Contact name cannot be empty');
+  const updates = Object.entries(values);
+  if (!updates.length) return contact;
+  db.prepare(`UPDATE contacts SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+    .run(...updates.map(([, v]) => v), new Date().toISOString(), id);
+  return getContact(id);
+}
+
+export function deleteContact(id) {
+  if (!getContact(id)) return false;
+  db.prepare('DELETE FROM interview_attendees WHERE contact_id = ?').run(id);
+  db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
+  return true;
+}
+
+// ---- Interviews ----
+//
+// A job can have several interviews (recruiter screen, technical, hiring
+// manager, ...). Each has a type, when it is scheduled, the contacts
+// attending it, the candidate's free-form (Markdown) notes, and its own Q&A:
+// the questions the candidate plans to ask, with the answers they got.
+
+export const INTERVIEW_TYPES = ['Recruiter', 'Hiring Manager', 'Technical', 'System Design', 'Behavioral', 'Panel', 'Executive', 'Team Fit', 'Final', 'Other'];
+
+// Where a question came from: typed by the candidate, proposed by Claude, or
+// copied from the company's own interview-questions list.
+export const QUESTION_SOURCES = ['user', 'claude', 'company'];
+
+// Canonicalize a type against the presets (case-insensitive); other values
+// are kept as given so a custom type ("Bar raiser") works too.
+function normalizeInterviewType(type) {
+  const raw = String(type ?? '').trim();
+  return INTERVIEW_TYPES.find(t => t.toLowerCase() === raw.toLowerCase()) ?? raw;
+}
+
+// scheduled_at is free-form ISO-ish text from the UI's datetime picker
+// ("2026-09-22T14:00") or a date; anything is accepted but trimmed.
+function normalizeScheduledAt(value) {
+  return String(value ?? '').trim();
+}
+
+function interviewRow(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    attendees: db.prepare('SELECT c.* FROM interview_attendees a JOIN contacts c ON c.id = a.contact_id WHERE a.interview_id = ? ORDER BY c.name COLLATE NOCASE').all(row.id),
+    questions: listInterviewQuestions(row.id)
+  };
+}
+
+// Unscheduled interviews sort last; scheduled ones in time order.
+const INTERVIEW_ORDER = "ORDER BY CASE WHEN scheduled_at = '' THEN 1 ELSE 0 END, scheduled_at, id";
+
+export function listInterviews(jobId) {
+  return db.prepare(`SELECT * FROM interviews WHERE job_id = ? ${INTERVIEW_ORDER}`).all(jobId).map(interviewRow);
+}
+
+export function getInterview(id) {
+  return interviewRow(db.prepare('SELECT * FROM interviews WHERE id = ?').get(id));
+}
+
+export function addInterview(jobId, { type, scheduled_at, notes } = {}) {
+  if (!getJob({ id: jobId })) throw new Error(`No job with id ${jobId}`);
+  const info = db.prepare('INSERT INTO interviews (job_id, type, scheduled_at, notes) VALUES (?, ?, ?, ?)')
+    .run(jobId, normalizeInterviewType(type), normalizeScheduledAt(scheduled_at), String(notes ?? ''));
+  return getInterview(info.lastInsertRowid);
+}
+
+export function updateInterview(id, fields) {
+  const interview = getInterview(id);
+  if (!interview) return null;
+  const updates = [];
+  if ('type' in fields) updates.push(['type', normalizeInterviewType(fields.type)]);
+  if ('scheduled_at' in fields) updates.push(['scheduled_at', normalizeScheduledAt(fields.scheduled_at)]);
+  if ('notes' in fields) updates.push(['notes', String(fields.notes ?? '')]);
+  if (updates.length) {
+    db.prepare(`UPDATE interviews SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+      .run(...updates.map(([, v]) => v), new Date().toISOString(), id);
+  }
+  return getInterview(id);
+}
+
+export function deleteInterview(id) {
+  if (!db.prepare('SELECT 1 FROM interviews WHERE id = ?').get(id)) return false;
+  db.prepare('DELETE FROM interview_questions WHERE interview_id = ?').run(id);
+  db.prepare('DELETE FROM interview_attendees WHERE interview_id = ?').run(id);
+  db.prepare('DELETE FROM interviews WHERE id = ?').run(id);
+  return true;
+}
+
+// Attendees: existing contacts by id. Adding one already there is a no-op.
+export function addInterviewAttendee(interviewId, contactId) {
+  if (!db.prepare('SELECT 1 FROM interviews WHERE id = ?').get(interviewId)) throw new Error(`No interview with id ${interviewId}`);
+  if (!getContact(contactId)) throw new Error(`No contact with id ${contactId}`);
+  db.prepare('INSERT OR IGNORE INTO interview_attendees (interview_id, contact_id) VALUES (?, ?)').run(interviewId, contactId);
+  return getInterview(interviewId);
+}
+
+export function removeInterviewAttendee(interviewId, contactId) {
+  db.prepare('DELETE FROM interview_attendees WHERE interview_id = ? AND contact_id = ?').run(interviewId, contactId);
+  return getInterview(interviewId);
+}
+
+// ---- Interview Q&A ----
+
+export function listInterviewQuestions(interviewId) {
+  return db.prepare('SELECT * FROM interview_questions WHERE interview_id = ? ORDER BY position, id').all(interviewId);
+}
+
+export function getInterviewQuestion(id) {
+  return db.prepare('SELECT * FROM interview_questions WHERE id = ?').get(id) ?? null;
+}
+
+// Appends questions to an interview's list (an array of strings or of
+// { question, answer? } objects, or newline-delimited text). Blank lines and
+// list markers are dropped and questions already on the list are skipped,
+// case-insensitively, so re-applying a proposal never duplicates. Returns
+// the rows that were added.
+export function addInterviewQuestions(interviewId, questions, { source = 'user' } = {}) {
+  if (!db.prepare('SELECT 1 FROM interviews WHERE id = ?').get(interviewId)) throw new Error(`No interview with id ${interviewId}`);
+  if (!QUESTION_SOURCES.includes(source)) source = 'user';
+  const items = (Array.isArray(questions) ? questions : parseQuestions(questions))
+    .map(q => (typeof q === 'object' && q !== null
+      ? { question: parseQuestions([q.question])[0], answer: String(q.answer ?? '') }
+      : { question: parseQuestions([q])[0], answer: '' }))
+    .filter(q => q.question);
+  const seen = new Set(listInterviewQuestions(interviewId).map(q => q.question.toLowerCase()));
+  let position = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM interview_questions WHERE interview_id = ?').get(interviewId).next;
+  const insert = db.prepare('INSERT INTO interview_questions (interview_id, question, answer, source, position) VALUES (?, ?, ?, ?, ?)');
+  const added = [];
+  for (const item of items) {
+    const key = item.question.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const info = insert.run(interviewId, item.question, item.answer, source, position++);
+    added.push(getInterviewQuestion(info.lastInsertRowid));
+  }
+  return added;
+}
+
+// Edits one question's text and/or answer. An emptied question is an error
+// (delete it instead); the answer may be blank.
+export function updateInterviewQuestion(id, fields) {
+  const row = getInterviewQuestion(id);
+  if (!row) return null;
+  const updates = [];
+  if ('question' in fields) {
+    const question = parseQuestions([fields.question])[0];
+    if (!question) throw new Error('A question cannot be empty — delete it instead');
+    updates.push(['question', question]);
+  }
+  if ('answer' in fields) updates.push(['answer', String(fields.answer ?? '')]);
+  if (!updates.length) return row;
+  db.prepare(`UPDATE interview_questions SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+    .run(...updates.map(([, v]) => v), new Date().toISOString(), id);
+  return getInterviewQuestion(id);
+}
+
+export function deleteInterviewQuestion(id) {
+  return db.prepare('DELETE FROM interview_questions WHERE id = ?').run(id).changes > 0;
+}
+
+// Sets the display order of an interview's questions from an array of their
+// ids (ids not listed keep their relative order after the listed ones).
+export function reorderInterviewQuestions(interviewId, ids) {
+  const current = listInterviewQuestions(interviewId);
+  const known = new Set(current.map(q => q.id));
+  const ordered = [...ids.filter(id => known.has(id)), ...current.map(q => q.id).filter(id => !ids.includes(id))];
+  const set = db.prepare('UPDATE interview_questions SET position = ? WHERE id = ? AND interview_id = ?');
+  ordered.forEach((id, i) => set.run(i, id, interviewId));
+  return listInterviewQuestions(interviewId);
 }
 
 // The shape of a company with no saved row yet: every profile field blank and,

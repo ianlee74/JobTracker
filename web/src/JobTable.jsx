@@ -548,9 +548,12 @@ function useWideLayout() {
 
 const WIDE_LAYOUT_QUERY = '(min-width: 1100px)';
 
-function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
+function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onOpenInterviews, onGenerate, onUploadDocument, onDeleteDocuments, generating, companyNotInterested, companyFavorite }) {
   const color = STATUS_COLORS[job.status] || '#6b7280';
   const showApplied = job.status === 'Applied' || job.proposed_salary != null || Boolean(job.application_notes);
+  // The Interviews page is offered while interviewing, and stays reachable
+  // afterwards (Offer, Not Moving Forward, …) once interviews were recorded.
+  const showInterviews = job.status === 'Interviewing' || job.interview_count > 0;
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
   const span = wide ? 2 : undefined;
@@ -605,6 +608,16 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
         </select>
         {job.status === 'Not Moving Forward' && <RejectionReason job={job} knownSkills={knownSkills} onUpdate={onUpdate} onDone={onPromptDone} />}
         {showApplied && <AppliedDetails job={job} prompt={promptOpen && job.status === 'Applied'} onUpdate={onUpdate} onDone={onPromptDone} />}
+        {showInterviews && (
+          <button
+            type="button"
+            className="interviews-link"
+            onClick={() => onOpenInterviews(job)}
+            title="Open the Interviews page — prep notes, attendees, and the questions to ask"
+          >
+            🎤 {job.interview_count ? `${job.interview_count} interview${job.interview_count === 1 ? '' : 's'}` : 'Interviews'}
+          </button>
+        )}
       </td>
       {!wide && (
         <td>
@@ -697,7 +710,7 @@ function SortableHeader({ label, sortKey, sort, onSort, width }) {
 // prompt (rejection reason, application details) hasn't been completed yet.
 // companyReferrals: company name -> names of past referrers, for the
 // Referred-by drop-down.
-export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptIds = new Set(), onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, companyReferrals = new Map(), isAdmin = true }) {
+export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptIds = new Set(), onUpdate, onPromptDone, onDelete, onEdit, onOpenCompany, onOpenInterviews, onGenerate, onUploadDocument, onDeleteDocuments, generatingIds, flaggedCompanies, favoriteCompanies, companyReferrals = new Map(), isAdmin = true }) {
   const wide = useWideLayout();
   if (!jobs.length) {
     return <div className="empty-state">No jobs match the current filters.</div>;
@@ -733,6 +746,7 @@ export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptI
               onDelete={onDelete}
               onEdit={onEdit}
               onOpenCompany={onOpenCompany}
+              onOpenInterviews={onOpenInterviews}
               onGenerate={onGenerate}
               onUploadDocument={onUploadDocument}
               onDeleteDocuments={onDeleteDocuments}

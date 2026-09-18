@@ -61,6 +61,24 @@ export function jobHref(url) {
   return (url || '').startsWith('file:') ? `/api/local-file?url=${encodeURIComponent(url)}` : url;
 }
 
+// Preset interview kinds (mirrors INTERVIEW_TYPES in server/db.js); a custom
+// free-text type is also allowed.
+export const INTERVIEW_TYPES = ['Recruiter', 'Hiring Manager', 'Technical', 'System Design', 'Behavioral', 'Panel', 'Executive', 'Team Fit', 'Final', 'Other'];
+
+// An interview's scheduled_at ("2026-09-22T14:00" local, or a bare date) as
+// "Tue, Sep 22 · 2:00 PM" / "Tue, Sep 22"; '' when unset or unparseable.
+export function formatWhen(value) {
+  if (!value) return '';
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+  if (!m) return String(value);
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0));
+  if (Number.isNaN(d.getTime())) return String(value);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const day = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+  if (!m[4]) return day;
+  return `${day} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 export const STATUS_COLORS = {
   'new': '#6b7280',
   'Interested': '#2563eb',

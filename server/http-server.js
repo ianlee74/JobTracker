@@ -3,10 +3,11 @@ import { readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany, researchJob } from './research.js';
+import { generateInterviewQuestions } from './interview.js';
 import { handleRespond } from './respond.js';
 import { handleAuth, requestUser, authEnabled, checkMcpToken, mcpTokenConfigured } from './auth.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -608,6 +609,124 @@ async function handleApi(req, res, url, user) {
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
+  }
+
+  // Contacts: the recruiters, hiring managers and interviewers the candidate
+  // meets, shared like companies. Anyone signed in can list, add and edit
+  // them (a user records their own interviewers); deleting is admin's.
+  if (url.pathname === '/api/contacts') {
+    if (req.method === 'GET') {
+      return json(res, 200, listContacts({ company: url.searchParams.get('company') || undefined, q: url.searchParams.get('q') || undefined }));
+    }
+    if (req.method === 'POST') {
+      try {
+        return json(res, 201, addContact(await readBody(req)));
+      } catch (err) {
+        return json(res, /already exists/.test(err.message) ? 409 : 400, { error: err.message });
+      }
+    }
+  }
+  if (parts[0] === 'api' && parts[1] === 'contacts' && parts.length === 3) {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid contact id' });
+    if (req.method === 'GET') {
+      const contact = getContact(id);
+      return contact ? json(res, 200, contact) : json(res, 404, { error: 'Not found' });
+    }
+    if (req.method === 'PATCH') {
+      try {
+        const contact = updateContact(id, await readBody(req));
+        return contact ? json(res, 200, contact) : json(res, 404, { error: 'Not found' });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (req.method === 'DELETE') {
+      if (!isAdmin) return forbidden(res);
+      return deleteContact(id) ? json(res, 200, { deleted: true }) : json(res, 404, { error: 'Not found' });
+    }
+  }
+
+  // The Interviews page for one job: GET /api/jobs/:id/interviews is the
+  // page's data (job, its company, every interview with attendees and Q&A,
+  // the preset interview types); POST adds an interview. A non-admin only
+  // reaches their own jobs (404 otherwise, so other people's job ids aren't
+  // confirmed to exist).
+  if (parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 4 && parts[3] === 'interviews') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return json(res, 400, { error: 'Invalid job id' });
+    const job = getJob({ id });
+    if (!job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'Job not found' });
+    if (req.method === 'GET') {
+      return json(res, 200, { job, company: getCompany(job.company), interviews: listInterviews(id), types: INTERVIEW_TYPES });
+    }
+    if (req.method === 'POST') {
+      try {
+        return json(res, 201, addInterview(id, await readBody(req)));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+  }
+
+  // One interview: /api/interviews/:iid (GET, PATCH { type, scheduled_at,
+  // notes }, DELETE); .../attendees (POST { contact_id } or { contact: {...}
+  // } to create-and-add) and .../attendees/:cid (DELETE); .../questions
+  // (POST { questions, source? } appends, PATCH { order: [ids] } reorders)
+  // and .../questions/:qid (PATCH { question, answer }, DELETE);
+  // .../generate has Claude propose questions (slow — a minute or so).
+  if (parts[0] === 'api' && parts[1] === 'interviews' && parts.length >= 3) {
+    const iid = Number(parts[2]);
+    if (!Number.isInteger(iid)) return json(res, 400, { error: 'Invalid interview id' });
+    const interview = getInterview(iid);
+    const job = interview ? getJob({ id: interview.job_id }) : null;
+    if (!interview || !job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'Interview not found' });
+    const sub = parts[3];
+
+    try {
+      if (parts.length === 3) {
+        if (req.method === 'GET') return json(res, 200, interview);
+        if (req.method === 'PATCH') return json(res, 200, updateInterview(iid, await readBody(req)));
+        if (req.method === 'DELETE') { deleteInterview(iid); return json(res, 200, { deleted: true }); }
+      }
+      if (sub === 'generate' && parts.length === 4 && req.method === 'POST') {
+        return json(res, 200, await generateInterviewQuestions(iid));
+      }
+      if (sub === 'attendees' && parts.length === 4 && req.method === 'POST') {
+        const body = await readBody(req);
+        let contactId = body.contact_id;
+        if (contactId == null && body.contact) {
+          // Create the contact first; default its company to the job's.
+          contactId = addContact({ company: job.company, ...body.contact }).id;
+        }
+        if (!Number.isInteger(Number(contactId))) return json(res, 400, { error: 'contact_id (or a contact to create) is required' });
+        return json(res, 200, addInterviewAttendee(iid, Number(contactId)));
+      }
+      if (sub === 'attendees' && parts.length === 5 && req.method === 'DELETE') {
+        return json(res, 200, removeInterviewAttendee(iid, Number(parts[4])));
+      }
+      if (sub === 'questions' && parts.length === 4) {
+        const body = await readBody(req);
+        if (req.method === 'POST') {
+          if (!Array.isArray(body.questions) && typeof body.questions !== 'string') return json(res, 400, { error: 'questions (an array, or newline-delimited text) is required' });
+          return json(res, 201, { added: addInterviewQuestions(iid, body.questions, { source: body.source }), questions: getInterview(iid).questions });
+        }
+        if (req.method === 'PATCH') {
+          if (!Array.isArray(body.order)) return json(res, 400, { error: 'order (an array of question ids) is required' });
+          return json(res, 200, { questions: reorderInterviewQuestions(iid, body.order.map(Number)) });
+        }
+      }
+      if (sub === 'questions' && parts.length === 5) {
+        const qid = Number(parts[4]);
+        const question = Number.isInteger(qid) ? getInterviewQuestion(qid) : null;
+        if (!question || question.interview_id !== iid) return json(res, 404, { error: 'Question not found' });
+        if (req.method === 'PATCH') return json(res, 200, updateInterviewQuestion(qid, await readBody(req)));
+        if (req.method === 'DELETE') { deleteInterviewQuestion(qid); return json(res, 200, { deleted: true }); }
+      }
+    } catch (err) {
+      return json(res, /already exists/.test(err.message) ? 409 : 400, { error: err.message });
+    }
+    return json(res, 404, { error: 'Unknown API route' });
   }
 
   if (parts[0] === 'api' && parts[1] === 'jobs' && parts.length === 3) {
