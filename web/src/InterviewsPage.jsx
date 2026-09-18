@@ -606,6 +606,17 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
   const types = data?.types?.length ? data.types : INTERVIEW_TYPES;
   const selected = data?.interviews.find(i => i.id === selectedId) ?? null;
 
+  // Which job the review cards at the top describe. Normally the page's own
+  // job; when the selected interview covers several, a job switcher above
+  // the cards picks among them (the company card follows the job).
+  const [reviewJobId, setReviewJobId] = useState(null);
+  useEffect(() => { setReviewJobId(null); }, [selectedId]);
+  const reviewJob = (reviewJobId != null && selected?.jobs.find(j => j.id === reviewJobId)) || data?.job || null;
+  const reviewCompany = !reviewJob || !data ? null
+    : reviewJob.company === data.company.name ? data.company
+    : companies.find(c => c.name === reviewJob.company)
+      || { name: reviewJob.company, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', favorite: 0 };
+
   const replace = (updated) => {
     setData(d => ({ ...d, interviews: d.interviews.map(i => (i.id === updated.id ? updated : i)) }));
   };
@@ -650,9 +661,25 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
         <div className="hint">Loading…</div>
       ) : (
         <>
-          <JobReview job={data.job} company={data.company} onOpenCompany={onOpenCompany} />
+          {selected && selected.jobs.length > 1 && (
+            <div className="view-switch review-job-switch" role="tablist" aria-label="Job shown">
+              {selected.jobs.map(j => (
+                <button
+                  key={j.id}
+                  role="tab"
+                  aria-selected={j.id === reviewJob.id}
+                  className={j.id === reviewJob.id ? 'active' : ''}
+                  onClick={() => setReviewJobId(j.id)}
+                  title={`Show the details of ${j.title} at ${j.company}`}
+                >
+                  {j.title}{j.company !== data.job.company || selected.jobs.some(o => o.title === j.title && o.id !== j.id) ? ` @ ${j.company}` : ''}
+                </button>
+              ))}
+            </div>
+          )}
+          <JobReview job={reviewJob} company={reviewCompany} onOpenCompany={onOpenCompany} />
           <CompanyReview
-            company={data.company}
+            company={reviewCompany}
             onOpenCompany={onOpenCompany}
             existing={selected ? selected.questions.map(q => q.question) : []}
             onAddQuestion={addCompanyQuestion}

@@ -1242,6 +1242,9 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
 }
 .attendee-title, .attendee-company { font-weight: 400; color: var(--text-muted); }
 .job-chip { background: rgba(37, 99, 235, 0.08); border-color: rgba(37, 99, 235, 0.3); }
+/* Job switcher above the review cards when an interview covers several jobs. */
+.review-job-switch { flex-wrap: wrap; max-width: 960px; }
+.review-job-switch button { white-space: normal; text-align: left; }
 .job-picker {
   padding: 5px 8px;
   border: 1px solid var(--border);
