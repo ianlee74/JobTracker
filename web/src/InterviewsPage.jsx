@@ -52,8 +52,10 @@ function Field({ label, children }) {
 // What the candidate should have in front of them about the job: the
 // posting link, the basics, why it fits, notes, and what they said in the
 // application.
-function JobReview({ job, company, onOpenCompany }) {
-  const [open, setOpen] = useState(true);
+// The ✎ opens the job's edit form in a new browser tab, so details learned
+// mid-interview (the salary band, say) can be recorded without leaving
+// this page; the page refreshes when it regains focus.
+function JobReview({ job, onOpenCompany }) {
   return (
     <div className="company-card review-card">
       <div className="review-header">
@@ -63,9 +65,18 @@ function JobReview({ job, company, onOpenCompany }) {
           <button className="company-link review-company" onClick={() => onOpenCompany(job.company)} title="Open company page">{job.company}</button>
           <span className="status-pill" style={{ color: STATUS_COLORS[job.status], borderColor: STATUS_COLORS[job.status] }}>{job.status}</span>
         </h2>
-        <button className="clear-btn collapse-btn" onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'Show'}</button>
+        <a
+          className="edit-btn review-edit"
+          href={`/?editJob=${job.id}`}
+          target="_blank"
+          rel="noopener"
+          title="Edit this job in a new tab (salary, notes, …) without leaving the interview"
+          aria-label={`Edit ${job.title}`}
+        >
+          ✎
+        </a>
       </div>
-      {open && (
+      {(
         <div className="review-grid">
           <Field label="Level">{job.level}</Field>
           <Field label="Category">{job.category}</Field>
@@ -88,7 +99,6 @@ function JobReview({ job, company, onOpenCompany }) {
 // The company's profile, notes, and its standing list of interview
 // questions — each with a button to copy it into the selected interview.
 function CompanyReview({ company, onOpenCompany, onAddQuestion, existing }) {
-  const [open, setOpen] = useState(true);
   const questions = parseQuestions(company.interview_questions);
   const have = new Set(existing.map(q => q.toLowerCase()));
   return (
@@ -98,9 +108,8 @@ function CompanyReview({ company, onOpenCompany, onAddQuestion, existing }) {
           <button className="company-link review-company" onClick={() => onOpenCompany(company.name)} title="Open company page">{company.name}</button>
           {company.favorite ? <span className="fav-badge" title="Favorite company">★</span> : null}
         </h2>
-        <button className="clear-btn collapse-btn" onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'Show'}</button>
       </div>
-      {open && (
+      {(
         <div className="review-grid">
           <Field label="Type">{company.company_type}</Field>
           <Field label="Employees">{company.employee_count}</Field>
@@ -603,19 +612,33 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
     return () => { cancelled = true; };
   }, [jobId]);
 
+  // Job details may be edited in another tab (the ✎ on a job card opens
+  // one); pick the changes up when this tab regains focus.
+  useEffect(() => {
+    const reload = () => {
+      fetchJobInterviews(jobId).then(d => setData(prev => (prev ? d : prev))).catch(() => {});
+    };
+    window.addEventListener('focus', reload);
+    return () => window.removeEventListener('focus', reload);
+  }, [jobId]);
+
   const types = data?.types?.length ? data.types : INTERVIEW_TYPES;
   const selected = data?.interviews.find(i => i.id === selectedId) ?? null;
 
-  // Which job the review cards at the top describe. Normally the page's own
-  // job; when the selected interview covers several, a job switcher above
-  // the cards picks among them (the company card follows the job).
-  const [reviewJobId, setReviewJobId] = useState(null);
-  useEffect(() => { setReviewJobId(null); }, [selectedId]);
-  const reviewJob = (reviewJobId != null && selected?.jobs.find(j => j.id === reviewJobId)) || data?.job || null;
-  const reviewCompany = !reviewJob || !data ? null
-    : reviewJob.company === data.company.name ? data.company
-    : companies.find(c => c.name === reviewJob.company)
-      || { name: reviewJob.company, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', favorite: 0 };
+  // The left column: a tab per company and per job the selected interview
+  // covers (just the page's own job and company before any interview
+  // exists). Tab keys: 'company:<name>' or a job id.
+  const leftJobs = selected?.jobs.length ? selected.jobs : data ? [data.job] : [];
+  const leftCompanies = [...new Set(leftJobs.map(j => j.company))];
+  const [leftTab, setLeftTab] = useState(null);
+  const leftKeys = [...leftCompanies.map(n => `company:${n}`), ...leftJobs.map(j => j.id)];
+  const activeLeft = leftKeys.includes(leftTab) ? leftTab : (data ? data.job.id : null);
+  const leftCompany = typeof activeLeft === 'string' ? activeLeft.slice('company:'.length) : null;
+  const reviewJob = typeof activeLeft === 'number' ? leftJobs.find(j => j.id === activeLeft) : null;
+  const companyFor = (name) => (!data ? null
+    : name === data.company.name ? data.company
+    : companies.find(c => c.name === name)
+      || { name, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', favorite: 0 });
 
   const replace = (updated) => {
     setData(d => ({ ...d, interviews: d.interviews.map(i => (i.id === updated.id ? updated : i)) }));
@@ -660,31 +683,48 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
       {!data ? (
         <div className="hint">Loading…</div>
       ) : (
-        <>
-          {selected && selected.jobs.length > 1 && (
-            <div className="view-switch review-job-switch" role="tablist" aria-label="Job shown">
-              {selected.jobs.map(j => (
+        <div className="interviews-layout">
+          {/* Left column: what to have in front of you — the company and each job. */}
+          <div className="interviews-left">
+            <div className="view-switch review-job-switch" role="tablist" aria-label="Company and jobs">
+              {leftCompanies.map(name => (
+                <button
+                  key={`company:${name}`}
+                  role="tab"
+                  aria-selected={activeLeft === `company:${name}`}
+                  className={activeLeft === `company:${name}` ? 'active' : ''}
+                  onClick={() => setLeftTab(`company:${name}`)}
+                  title={`${name}'s profile, notes and question list`}
+                >
+                  {leftCompanies.length > 1 ? name : 'Company'}
+                </button>
+              ))}
+              {leftJobs.map(j => (
                 <button
                   key={j.id}
                   role="tab"
-                  aria-selected={j.id === reviewJob.id}
-                  className={j.id === reviewJob.id ? 'active' : ''}
-                  onClick={() => setReviewJobId(j.id)}
-                  title={`Show the details of ${j.title} at ${j.company}`}
+                  aria-selected={activeLeft === j.id}
+                  className={activeLeft === j.id ? 'active' : ''}
+                  onClick={() => setLeftTab(j.id)}
+                  title={`${j.title} at ${j.company}`}
                 >
-                  {j.title}{j.company !== data.job.company || selected.jobs.some(o => o.title === j.title && o.id !== j.id) ? ` @ ${j.company}` : ''}
+                  {leftJobs.length > 1 ? j.title : 'Job'}
                 </button>
               ))}
             </div>
-          )}
-          <JobReview job={reviewJob} company={reviewCompany} onOpenCompany={onOpenCompany} />
-          <CompanyReview
-            company={reviewCompany}
-            onOpenCompany={onOpenCompany}
-            existing={selected ? selected.questions.map(q => q.question) : []}
-            onAddQuestion={addCompanyQuestion}
-          />
+            {reviewJob && <JobReview job={reviewJob} onOpenCompany={onOpenCompany} />}
+            {leftCompany != null && (
+              <CompanyReview
+                company={companyFor(leftCompany)}
+                onOpenCompany={onOpenCompany}
+                existing={selected ? selected.questions.map(q => q.question) : []}
+                onAddQuestion={addCompanyQuestion}
+              />
+            )}
+          </div>
 
+          {/* Right column: the interviews themselves. */}
+          <div className="interviews-right">
           <div className="interview-tabs" role="tablist" aria-label="Interviews">
             {data.interviews.map((i, n) => (
               <button
@@ -722,7 +762,8 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
           ) : (
             <div className="empty-state">No interviews recorded for this job yet — add the first one above.</div>
           )}
-        </>
+          </div>
+        </div>
       )}
     </div>
   );
