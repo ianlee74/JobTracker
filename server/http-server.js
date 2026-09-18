@@ -1,13 +1,12 @@
 import http from 'node:http';
-import { readFile, readdir, stat, writeFile, mkdir, rm } from 'node:fs/promises';
+import { readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import os from 'node:os';
 import path from 'node:path';
 import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
-import { researchCompany } from './research.js';
+import { researchCompany, researchJob } from './research.js';
 import { handleRespond } from './respond.js';
 import { handleAuth, requestUser, authEnabled, checkMcpToken, mcpTokenConfigured } from './auth.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -60,17 +59,6 @@ function readRawBody(req, limit) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
-}
-
-// Drive roots for the in-app file picker.
-function listRoots() {
-  if (process.platform !== 'win32') return ['/'];
-  const roots = [];
-  for (let c = 67; c <= 90; c++) { // C: through Z:
-    const root = `${String.fromCharCode(c)}:\\`;
-    if (existsSync(root)) roots.push(root);
-  }
-  return roots;
 }
 
 // Document-generation settings live on the person; ?person=<id> selects whose
@@ -205,29 +193,9 @@ async function handleApi(req, res, url, user) {
       target = path.join(POSTINGS_DIR, `${stem} (${i})${ext}`);
     }
     await writeFile(target, body);
-    return json(res, 201, { path: target, url: pathToFileURL(target).href });
-  }
-
-  // Directory listing for the in-app file picker.
-  if (req.method === 'GET' && url.pathname === '/api/browse') {
-    if (!isAdmin) return forbidden(res);
-    const dir = path.resolve(url.searchParams.get('dir') || os.homedir());
-    let dirents;
-    try {
-      dirents = await readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      return json(res, 400, { error: `Cannot read ${dir}: ${err.message}` });
-    }
-    const parent = path.dirname(dir);
-    return json(res, 200, {
-      dir,
-      parent: parent === dir ? null : parent,
-      roots: listRoots(),
-      entries: dirents
-        .filter(e => e.isDirectory() || e.isFile())
-        .map(e => ({ name: e.name, path: path.join(dir, e.name), type: e.isDirectory() ? 'dir' : 'file' }))
-        .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
-    });
+    // can_parse: whether the UI may offer to fill the form from the posting
+    // with Claude (needs Anthropic API credentials).
+    return json(res, 201, { path: target, url: pathToFileURL(target).href, can_parse: await hasApiCredentials() });
   }
 
   // Browsers refuse to open file:// links from an http page, so tracked local
@@ -352,6 +320,29 @@ async function handleApi(req, res, url, user) {
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
+  }
+
+  // Have Claude read a job posting — body { url }: a stored/local file:// URL
+  // or an http(s) page — and propose the add-job form's fields (research-job
+  // skill). Slow (tens of seconds). A company the posting names that isn't
+  // tracked yet is added and researched in the background. ?person=<id>
+  // scopes the category suggestions.
+  if (req.method === 'POST' && url.pathname === '/api/job/research') {
+    if (!isAdmin) return forbidden(res);
+    const body = await readBody(req);
+    if (typeof body.url !== 'string' || !body.url.trim()) return json(res, 400, { error: 'url is required' });
+    const person = Number(url.searchParams.get('person'));
+    try {
+      return json(res, 200, await researchJob(body.url, { personId: Number.isInteger(person) && person > 0 ? person : undefined }));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+
+  // Whether the server has Anthropic API credentials, so the UI can show the
+  // Claude-backed actions (parse a posting) only when they can work.
+  if (req.method === 'GET' && url.pathname === '/api/ai-status') {
+    return json(res, 200, { api_credentials_found: await hasApiCredentials() });
   }
 
   // Per-person document-generation settings (?person=<id>). The Anthropic API

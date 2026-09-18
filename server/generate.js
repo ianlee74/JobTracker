@@ -156,8 +156,9 @@ function field(label, value) {
 }
 
 // The job posting itself: local files are embedded; http(s) postings are
-// fetched by Claude via the web_fetch server tool.
-async function postingContext(job) {
+// fetched by Claude via the web_fetch server tool. Shared with job parsing
+// (research.js), which passes `{ url }` for a posting not yet tracked.
+export async function postingContext(job) {
   if (job.url.startsWith('file:')) {
     let filePath;
     try {

@@ -63,10 +63,14 @@ export const uploadPosting = (file) =>
     headers: { 'Content-Type': file.type || 'application/octet-stream' },
     body: file
   });
-// Directory listing from the server machine for the in-app file picker;
-// no dir means the server's home directory.
-export const browseDir = (dir) =>
-  request('/api/browse' + (dir ? `?dir=${encodeURIComponent(dir)}` : ''));
+// Has Claude read a job posting (a stored file:// URL or an http(s) page) and
+// propose the add-job form's fields (slow — tens of seconds). Nothing about
+// the job is saved; a company the posting names that isn't tracked yet is
+// added and researched in the background (company_status: 'created').
+export const researchJob = (url, personId) =>
+  request('/api/job/research' + (personId ? `?person=${personId}` : ''), { method: 'POST', body: JSON.stringify({ url }) });
+// Whether the server has Anthropic API credentials (for Claude-backed actions).
+export const fetchAiStatus = () => request('/api/ai-status');
 // Document-generation settings are per person.
 export const fetchSettings = (personId) => request(`/api/settings?person=${personId}`);
 // Stores/overwrites the server's managed snapshot of the person's standard

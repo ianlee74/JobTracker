@@ -1,5 +1,5 @@
-import { getCompany, listJobs, upsertCompany, addCompanyInterviewQuestions, parseQuestions, normalizeTicker, COMPANY_TYPES, EMPLOYEE_COUNTS } from './db.js';
-import { generateDocument, loadSkill } from './generate.js';
+import { getCompany, listJobs, listCompanies, addCompany, upsertCompany, addCompanyInterviewQuestions, parseQuestions, normalizeTicker, COMPANY_TYPES, EMPLOYEE_COUNTS, LEVELS } from './db.js';
+import { generateDocument, loadSkill, postingContext } from './generate.js';
 
 // Company research via the Anthropic API: Claude searches the web for the
 // company and returns values for the tracker's company fields (website, type,
@@ -138,4 +138,129 @@ export async function researchCompany(name, { apply = false } = {}) {
   };
   if (apply) result.company = applyResearch(name, research);
   return result;
+}
+
+// ---- Job posting parsing ----
+//
+// Reads one posting (a stored/local file or a web page) and proposes the
+// add-job form's fields, following the `research-job` skill
+// (skills/research-job/SKILL.md). The proposal is what the form is filled
+// with; nothing about the job is saved until the person submits it. The one
+// side effect: a company the posting names that isn't tracked yet is added
+// and researched (research-company skill) in the background, so its profile
+// is ready by the time the job is.
+
+const JOB_SKILL = 'research-job';
+
+async function loadJobSkill() {
+  const skill = await loadSkill(JOB_SKILL);
+  return {
+    model: skill.model || DEFAULT_MODEL,
+    system: skill.instructions.replaceAll('{{LEVELS}}', LEVELS.join(', '))
+  };
+}
+
+// Turns the model's reply into a validated job proposal; tolerant of a stray
+// fence or a sentence around the JSON, and of fields of the wrong type.
+function parseJobResearch(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('The parsing reply was not in the expected format.');
+  let parsed;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    throw new Error('The parsing reply was not valid JSON.');
+  }
+  const str = (v) => (typeof v === 'string' ? v.replace(/<\/?cite\b[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '');
+  const num = (v) => {
+    const n = typeof v === 'string' ? Number(v.replace(/[^0-9.]/g, '')) : Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  };
+  const website = str(parsed.company_website);
+  const level = str(parsed.level);
+  const remote = str(parsed.remote);
+  return {
+    title: str(parsed.title),
+    company: str(parsed.company),
+    company_website: /^https?:\/\//i.test(website) ? website : '',
+    level: LEVELS.find(l => l.toLowerCase() === level.toLowerCase()) || '',
+    category: str(parsed.category),
+    salary: str(parsed.salary),
+    salary_min: num(parsed.salary_min),
+    salary_max: num(parsed.salary_max),
+    salary_uncertain: typeof parsed.salary_uncertain === 'boolean' ? parsed.salary_uncertain : !str(parsed.salary),
+    location: str(parsed.location),
+    remote: ['Remote', 'Hybrid', 'On-site'].find(r => r.toLowerCase() === remote.toLowerCase()) || '',
+    note: str(parsed.note),
+    confidence: ['high', 'medium', 'low'].includes(str(parsed.confidence)) ? str(parsed.confidence) : 'medium'
+  };
+}
+
+// Companies whose background research is in flight, so a posting parsed
+// twice doesn't research the same new company twice.
+const researching = new Set();
+
+function researchInBackground(name) {
+  if (researching.has(name)) return;
+  researching.add(name);
+  researchCompany(name, { apply: true })
+    .then(() => console.log(`[research] researched new company ${name}`))
+    .catch(err => console.error(`[research] research of new company ${name} failed: ${err.message}`))
+    .finally(() => researching.delete(name));
+}
+
+// Parses one posting by URL (file:// for a stored/local file, http(s) for a
+// page Claude fetches). `personId` scopes the category suggestions to that
+// person's jobs. Resolves to the proposal plus `company_status`: 'existing'
+// (the name was matched to a tracked company, whose spelling is returned),
+// 'created' (a new company was added and its research started), or 'none'
+// (the posting named no company).
+export async function researchJob(url, { personId } = {}) {
+  url = (url || '').trim();
+  if (!url) throw new Error('A posting URL is required');
+  if (!/^(https?|file):/i.test(url)) throw new Error('The posting URL must be an http(s) or file:// URL');
+
+  const posting = await postingContext({ url });
+  if (!posting.block && !posting.tools) throw new Error(posting.note.replace(/; tailor from the job details above\.$/, '.'));
+
+  const companies = listCompanies().map(c => c.name);
+  const categories = [...new Set(listJobs({ personId }).map(j => j.category).filter(Boolean))].sort();
+  const lines = [`Posting URL: ${url}`];
+  if (posting.note) lines.push(posting.note);
+  if (companies.length) lines.push('', 'Companies already tracked (use the exact spelling when the posting\'s employer is one of these):', companies.join('; '));
+  if (categories.length) lines.push('', 'Categories the seeker already uses (pick one when it fits):', categories.join('; '));
+
+  const skill = await loadJobSkill();
+  const text = await generateDocument({
+    contextBlocks: posting.block ? [posting.block] : [],
+    tools: posting.tools,
+    instruction: lines.join('\n'),
+    model: skill.model,
+    system: skill.system,
+    what: 'to parse this job posting'
+  });
+  const job = parseJobResearch(text);
+
+  let companyStatus = 'none';
+  if (job.company) {
+    const existing = companies.find(c => c.toLowerCase() === job.company.toLowerCase());
+    if (existing) {
+      job.company = existing;
+      companyStatus = 'existing';
+    } else {
+      try {
+        addCompany(job.company, job.company_website ? { website: job.company_website } : {});
+        companyStatus = 'created';
+        researchInBackground(job.company);
+      } catch (err) {
+        // Added concurrently (another parse, the MCP server): treat as existing.
+        const now = listCompanies().find(c => c.name.toLowerCase() === job.company.toLowerCase());
+        if (!now) throw err;
+        job.company = now.name;
+        companyStatus = 'existing';
+      }
+    }
+  }
+  return { ...job, url, company_status: companyStatus };
 }
