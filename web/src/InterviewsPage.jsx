@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { INTERVIEW_TYPES, STATUS_COLORS, formatDollars, formatSalaryRange, formatWhen, jobHref, parseQuestions, tickerHref } from './constants.js';
-import { fetchJobInterviews, addInterview, updateInterview, deleteInterview, addInterviewJob, removeInterviewJob, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
+import { fetchJobInterviews, fetchInterview, updateContact, addInterview, updateInterview, deleteInterview, addInterviewJob, removeInterviewJob, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { ContactForm } from './ContactsPage.jsx';
 
@@ -147,6 +147,7 @@ function Attendees({ interview, contacts, job, companies, onChange, onContactsCh
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState('');
   const [creating, setCreating] = useState(null); // name for the new-contact form
+  const [editing, setEditing] = useState(null); // the attendee whose contact card is open
   const attending = new Set(interview.attendees.map(c => c.id));
   const q = text.trim().toLowerCase();
   const matches = useMemo(() => {
@@ -177,10 +178,16 @@ function Attendees({ interview, contacts, job, companies, onChange, onContactsCh
       <span className="review-label">Attendees</span>
       <div className="attendee-chips">
         {interview.attendees.map(c => (
-          <span key={c.id} className="attendee-chip" title={[c.title, c.company, c.email].filter(Boolean).join(' · ') || undefined}>
-            {c.name}
-            {c.title ? <span className="attendee-title"> · {c.title}</span> : null}
-            {c.company ? <span className="attendee-company"> @ {c.company}</span> : null}
+          <span key={c.id} className="attendee-chip">
+            <button
+              className="attendee-name"
+              onClick={() => setEditing(c)}
+              title={`${[c.title, c.company, c.email, c.phone].filter(Boolean).join(' · ') || c.name}\n\nClick to edit this contact`}
+            >
+              {c.name}
+              {c.title ? <span className="attendee-title"> · {c.title}</span> : null}
+              {c.company ? <span className="attendee-company"> @ {c.company}</span> : null}
+            </button>
             <button className="chip-x attendee-x" onClick={() => remove(c.id)} title="Remove from this interview" aria-label={`Remove ${c.name}`}>×</button>
           </span>
         ))}
@@ -235,6 +242,21 @@ function Attendees({ interview, contacts, job, companies, onChange, onContactsCh
             setAdding(false);
           }}
           onClose={() => setCreating(null)}
+        />
+      )}
+      {editing && (
+        <ContactForm
+          contact={editing}
+          companies={companies}
+          onSubmit={async (fields) => {
+            // Contacts are shared: the saved card shows on every interview
+            // and on the Contacts page, so refresh both.
+            await updateContact(editing.id, fields);
+            onChange(await fetchInterview(interview.id));
+            onContactsChanged();
+            setEditing(null);
+          }}
+          onClose={() => setEditing(null)}
         />
       )}
     </div>

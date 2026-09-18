@@ -130,7 +130,7 @@ Once a job is `Interviewing` (or has interviews recorded), a **🎤 Interviews**
 
 - a **type** and **when** it takes place;
 - the **jobs it covers** — usually one, but an interview that discusses several openings at once (two roles on the same team, say) can be linked to each of them (the picker offers your other `Interviewing` jobs): it then appears on every linked job's Interviews page with the same notes and Q&A, the left column gets a tab per linked job, question generation considers all of them, and deleting a job only unlinks it (an interview with no job left goes with it);
-- **attendees** — picked from your contacts or created on the spot (a new attendee defaults to the job's company), shown with their title and company;
+- **attendees** — picked from your contacts or created on the spot (a new attendee defaults to the job's company), shown with their title and company; click one to edit their contact card in place;
 - **notes** in **Markdown**, with Edit / Preview, for prep beforehand and live notes during the call (headings, lists, task lists, tables, code, quotes and links all render);
 - **Q&A** — the questions you plan to ask, each with a box for the answer you get. Add questions by hand, copy them from the company's list with one click, reorder or edit them in place, and **✨ Generate questions with Claude** to have Claude propose 8–12 questions for *this* interview: grounded in the posting, the company profile and its web research, the interview's type and attendees, and what earlier interviews for the same job already asked and learned (their Q&A and notes are given to it, so it follows up rather than repeats). The proposal is shown with a rationale per question and checkboxes; only the ticked ones are added.
 

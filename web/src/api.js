@@ -86,6 +86,7 @@ export const deleteContact = (id) =>
 // ---- Interviews (the Interviews page for one job) ----
 // The page's data: { job, company, interviews: [{ ..., attendees, questions }], types }.
 export const fetchJobInterviews = (jobId) => request(`/api/jobs/${jobId}/interviews`);
+export const fetchInterview = (id) => request(`/api/interviews/${id}`);
 export const addInterview = (jobId, fields) =>
   request(`/api/jobs/${jobId}/interviews`, { method: 'POST', body: JSON.stringify(fields) });
 export const updateInterview = (id, fields) =>
