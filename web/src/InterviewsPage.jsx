@@ -487,13 +487,13 @@ function QuestionsSection({ interview, canGenerate, onChange, onError }) {
 
 // The jobs one interview covers: chips (the page's own job can't be
 // unlinked from here, nor the last one), plus a picker of the person's other
-// jobs — same company first — to link another opening discussed in the
-// same conversation.
+// jobs that are being interviewed for — same company first — to link
+// another opening discussed in the same conversation.
 function InterviewJobs({ interview, job, jobs, onChange, onError }) {
   const [adding, setAdding] = useState(false);
   const linked = new Set(interview.jobs.map(j => j.id));
   const candidates = jobs
-    .filter(j => !linked.has(j.id))
+    .filter(j => !linked.has(j.id) && j.status === 'Interviewing')
     .sort((a, b) => (b.company === job.company) - (a.company === job.company) || a.company.localeCompare(b.company) || a.title.localeCompare(b.title));
   const link = async (jobId) => {
     try {
@@ -523,7 +523,7 @@ function InterviewJobs({ interview, job, jobs, onChange, onError }) {
           </span>
         ))}
         {!adding && candidates.length > 0 && (
-          <button className="link-btn" onClick={() => setAdding(true)} title="This interview also covers another opening">+ Add job</button>
+          <button className="link-btn" onClick={() => setAdding(true)} title="This interview also covers another opening you're interviewing for">+ Add job</button>
         )}
         {adding && (
           <select
@@ -534,7 +534,7 @@ function InterviewJobs({ interview, job, jobs, onChange, onError }) {
             onBlur={() => setAdding(false)}
           >
             <option value="">Which job does this interview also cover?</option>
-            {candidates.map(j => <option key={j.id} value={j.id}>{j.title} @ {j.company} ({j.status})</option>)}
+            {candidates.map(j => <option key={j.id} value={j.id}>{j.title} @ {j.company}</option>)}
           </select>
         )}
       </div>
