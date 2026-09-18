@@ -71,6 +71,46 @@ export const researchJob = (url, personId) =>
   request('/api/job/research' + (personId ? `?person=${personId}` : ''), { method: 'POST', body: JSON.stringify({ url }) });
 // Whether the server has Anthropic API credentials (for Claude-backed actions).
 export const fetchAiStatus = () => request('/api/ai-status');
+
+// ---- Contacts (recruiters, hiring managers, interviewers) ----
+export const fetchContacts = (company) =>
+  request('/api/contacts' + (company ? `?company=${encodeURIComponent(company)}` : ''));
+export const addContact = (fields) =>
+  request('/api/contacts', { method: 'POST', body: JSON.stringify(fields) });
+export const updateContact = (id, fields) =>
+  request(`/api/contacts/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
+export const deleteContact = (id) =>
+  request(`/api/contacts/${id}`, { method: 'DELETE' });
+
+// ---- Interviews (the Interviews page for one job) ----
+// The page's data: { job, company, interviews: [{ ..., attendees, questions }], types }.
+export const fetchJobInterviews = (jobId) => request(`/api/jobs/${jobId}/interviews`);
+export const addInterview = (jobId, fields) =>
+  request(`/api/jobs/${jobId}/interviews`, { method: 'POST', body: JSON.stringify(fields) });
+export const updateInterview = (id, fields) =>
+  request(`/api/interviews/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
+export const deleteInterview = (id) =>
+  request(`/api/interviews/${id}`, { method: 'DELETE' });
+// Attach an existing contact ({ contact_id }) or create one and attach it
+// ({ contact: { name, ... } }); resolves to the updated interview.
+export const addInterviewAttendee = (id, body) =>
+  request(`/api/interviews/${id}/attendees`, { method: 'POST', body: JSON.stringify(body) });
+export const removeInterviewAttendee = (id, contactId) =>
+  request(`/api/interviews/${id}/attendees/${contactId}`, { method: 'DELETE' });
+// Appends questions (strings, or { question, answer }); resolves to
+// { added, questions } with the full list.
+export const addInterviewQuestions = (id, questions, source = 'user') =>
+  request(`/api/interviews/${id}/questions`, { method: 'POST', body: JSON.stringify({ questions, source }) });
+export const reorderInterviewQuestions = (id, order) =>
+  request(`/api/interviews/${id}/questions`, { method: 'PATCH', body: JSON.stringify({ order }) });
+export const updateInterviewQuestion = (id, qid, fields) =>
+  request(`/api/interviews/${id}/questions/${qid}`, { method: 'PATCH', body: JSON.stringify(fields) });
+export const deleteInterviewQuestion = (id, qid) =>
+  request(`/api/interviews/${id}/questions/${qid}`, { method: 'DELETE' });
+// Has Claude propose questions for the interview (slow — a minute or so).
+// Resolves to { questions: [{ question, why, topic }], sources }; nothing is saved.
+export const generateInterviewQuestions = (id) =>
+  request(`/api/interviews/${id}/generate`, { method: 'POST', body: '{}' });
 // Document-generation settings are per person.
 export const fetchSettings = (personId) => request(`/api/settings?person=${personId}`);
 // Stores/overwrites the server's managed snapshot of the person's standard
