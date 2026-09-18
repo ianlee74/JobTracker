@@ -1241,6 +1241,9 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
   font-weight: 600;
 }
 .attendee-title, .attendee-company { font-weight: 400; color: var(--text-muted); }
+/* The chip's name opens the contact card for editing. */
+.attendee-name { border: none; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.attendee-name:hover { color: var(--accent); }
 .job-chip { background: rgba(37, 99, 235, 0.08); border-color: rgba(37, 99, 235, 0.3); }
 /* Two columns when there's room: the company / job tabs on the left, the
    interview on the right. The left column sticks so the job details stay in
