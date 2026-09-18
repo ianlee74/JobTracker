@@ -3,7 +3,7 @@ import { readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, linkInterviewJob, unlinkInterviewJob, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany, researchJob } from './research.js';
@@ -670,11 +670,13 @@ async function handleApi(req, res, url, user) {
   }
 
   // One interview: /api/interviews/:iid (GET, PATCH { type, scheduled_at,
-  // notes }, DELETE); .../attendees (POST { contact_id } or { contact: {...}
-  // } to create-and-add) and .../attendees/:cid (DELETE); .../questions
-  // (POST { questions, source? } appends, PATCH { order: [ids] } reorders)
-  // and .../questions/:qid (PATCH { question, answer }, DELETE);
-  // .../generate has Claude propose questions (slow — a minute or so).
+  // notes }, DELETE); .../jobs (POST { job_id } links another job the
+  // interview covers) and .../jobs/:jid (DELETE unlinks; the last job can't
+  // be); .../attendees (POST { contact_id } or { contact: {...} } to
+  // create-and-add) and .../attendees/:cid (DELETE); .../questions (POST
+  // { questions, source? } appends, PATCH { order: [ids] } reorders) and
+  // .../questions/:qid (PATCH { question, answer }, DELETE); .../generate
+  // has Claude propose questions (slow — a minute or so).
   if (parts[0] === 'api' && parts[1] === 'interviews' && parts.length >= 3) {
     const iid = Number(parts[2]);
     if (!Number.isInteger(iid)) return json(res, 400, { error: 'Invalid interview id' });
@@ -688,6 +690,17 @@ async function handleApi(req, res, url, user) {
         if (req.method === 'GET') return json(res, 200, interview);
         if (req.method === 'PATCH') return json(res, 200, updateInterview(iid, await readBody(req)));
         if (req.method === 'DELETE') { deleteInterview(iid); return json(res, 200, { deleted: true }); }
+      }
+      if (sub === 'jobs' && parts.length === 4 && req.method === 'POST') {
+        const body = await readBody(req);
+        const jid = Number(body.job_id);
+        const extra = Number.isInteger(jid) ? getJob({ id: jid }) : null;
+        // Same 404 as for any job the caller may not reach.
+        if (!extra || (!isAdmin && extra.person_id !== user.person_id)) return json(res, 404, { error: 'Job not found' });
+        return json(res, 200, linkInterviewJob(iid, jid));
+      }
+      if (sub === 'jobs' && parts.length === 5 && req.method === 'DELETE') {
+        return json(res, 200, unlinkInterviewJob(iid, Number(parts[4])));
       }
       if (sub === 'generate' && parts.length === 4 && req.method === 'POST') {
         return json(res, 200, await generateInterviewQuestions(iid));

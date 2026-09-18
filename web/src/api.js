@@ -91,6 +91,12 @@ export const updateInterview = (id, fields) =>
   request(`/api/interviews/${id}`, { method: 'PATCH', body: JSON.stringify(fields) });
 export const deleteInterview = (id) =>
   request(`/api/interviews/${id}`, { method: 'DELETE' });
+// Link another of the person's jobs that this interview also covers, or
+// unlink one (the last job can't be); both resolve to the updated interview.
+export const addInterviewJob = (id, jobId) =>
+  request(`/api/interviews/${id}/jobs`, { method: 'POST', body: JSON.stringify({ job_id: jobId }) });
+export const removeInterviewJob = (id, jobId) =>
+  request(`/api/interviews/${id}/jobs/${jobId}`, { method: 'DELETE' });
 // Attach an existing contact ({ contact_id }) or create one and attach it
 // ({ contact: { name, ... } }); resolves to the updated interview.
 export const addInterviewAttendee = (id, body) =>

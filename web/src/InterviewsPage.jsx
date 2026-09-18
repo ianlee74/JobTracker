@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { INTERVIEW_TYPES, STATUS_COLORS, formatDollars, formatSalaryRange, formatWhen, jobHref, parseQuestions, tickerHref } from './constants.js';
-import { fetchJobInterviews, addInterview, updateInterview, deleteInterview, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
+import { fetchJobInterviews, addInterview, updateInterview, deleteInterview, addInterviewJob, removeInterviewJob, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { ContactForm } from './ContactsPage.jsx';
 
@@ -169,7 +169,9 @@ function Attendees({ interview, contacts, job, companies, onChange, onContactsCh
       <div className="attendee-chips">
         {interview.attendees.map(c => (
           <span key={c.id} className="attendee-chip" title={[c.title, c.company, c.email].filter(Boolean).join(' · ') || undefined}>
-            {c.name}{c.title ? <span className="attendee-title"> · {c.title}</span> : null}
+            {c.name}
+            {c.title ? <span className="attendee-title"> · {c.title}</span> : null}
+            {c.company ? <span className="attendee-company"> @ {c.company}</span> : null}
             <button className="chip-x attendee-x" onClick={() => remove(c.id)} title="Remove from this interview" aria-label={`Remove ${c.name}`}>×</button>
           </span>
         ))}
@@ -483,8 +485,65 @@ function QuestionsSection({ interview, canGenerate, onChange, onError }) {
   );
 }
 
-// One interview's panel: type and time, attendees, notes, Q&A.
-function InterviewPanel({ interview, job, types, contacts, companies, canGenerate, onChange, onDelete, onContactsChanged, onError }) {
+// The jobs one interview covers: chips (the page's own job can't be
+// unlinked from here, nor the last one), plus a picker of the person's other
+// jobs — same company first — to link another opening discussed in the
+// same conversation.
+function InterviewJobs({ interview, job, jobs, onChange, onError }) {
+  const [adding, setAdding] = useState(false);
+  const linked = new Set(interview.jobs.map(j => j.id));
+  const candidates = jobs
+    .filter(j => !linked.has(j.id))
+    .sort((a, b) => (b.company === job.company) - (a.company === job.company) || a.company.localeCompare(b.company) || a.title.localeCompare(b.title));
+  const link = async (jobId) => {
+    try {
+      onChange(await addInterviewJob(interview.id, jobId));
+      setAdding(false);
+    } catch (err) {
+      onError(err.message);
+    }
+  };
+  const unlink = async (jobId) => {
+    try {
+      onChange(await removeInterviewJob(interview.id, jobId));
+    } catch (err) {
+      onError(err.message);
+    }
+  };
+  return (
+    <div className="attendees interview-jobs">
+      <span className="review-label">Jobs covered</span>
+      <div className="attendee-chips">
+        {interview.jobs.map(j => (
+          <span key={j.id} className="attendee-chip job-chip" title={`${j.title} at ${j.company} · ${j.status}`}>
+            {j.title}<span className="attendee-company"> @ {j.company}</span>
+            {j.id !== job.id && interview.jobs.length > 1 && (
+              <button className="chip-x attendee-x" onClick={() => unlink(j.id)} title="This interview no longer covers this job" aria-label={`Remove ${j.title}`}>×</button>
+            )}
+          </span>
+        ))}
+        {!adding && candidates.length > 0 && (
+          <button className="link-btn" onClick={() => setAdding(true)} title="This interview also covers another opening">+ Add job</button>
+        )}
+        {adding && (
+          <select
+            autoFocus
+            className="job-picker"
+            defaultValue=""
+            onChange={e => { if (e.target.value) link(Number(e.target.value)); }}
+            onBlur={() => setAdding(false)}
+          >
+            <option value="">Which job does this interview also cover?</option>
+            {candidates.map(j => <option key={j.id} value={j.id}>{j.title} @ {j.company} ({j.status})</option>)}
+          </select>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// One interview's panel: type and time, jobs covered, attendees, notes, Q&A.
+function InterviewPanel({ interview, job, jobs, types, contacts, companies, canGenerate, onChange, onDelete, onContactsChanged, onError }) {
   const save = async (fields) => {
     try {
       onChange(await updateInterview(interview.id, fields));
@@ -516,6 +575,7 @@ function InterviewPanel({ interview, job, types, contacts, companies, canGenerat
           Delete interview
         </button>
       </div>
+      <InterviewJobs interview={interview} job={job} jobs={jobs} onChange={onChange} onError={onError} />
       <Attendees interview={interview} contacts={contacts} job={job} companies={companies} onChange={onChange} onContactsChanged={onContactsChanged} onError={onError} />
       <Notes key={interview.id} interview={interview} onSave={save} />
       <QuestionsSection interview={interview} canGenerate={canGenerate} onChange={onChange} onError={onError} />
@@ -528,7 +588,7 @@ function InterviewPanel({ interview, job, types, contacts, companies, canGenerat
 // technical, hiring manager, ...) as tabs, with the selected one's
 // attendees, Markdown notes and Q&A below. Opened from the 🎤 button on a
 // job row; everything saves automatically.
-export default function InterviewsPage({ jobId, contacts, companies, canGenerate, onBack, onOpenCompany, onContactsChanged }) {
+export default function InterviewsPage({ jobId, jobs = [], contacts, companies, canGenerate, onBack, onOpenCompany, onContactsChanged }) {
   const [data, setData] = useState(null); // { job, company, interviews, types }
   const [selectedId, setSelectedId] = useState(null);
   const [error, setError] = useState(null);
@@ -610,6 +670,7 @@ export default function InterviewsPage({ jobId, contacts, companies, canGenerate
                 <span className="interview-tab-title">{n + 1}. {i.type || 'Interview'}</span>
                 <span className="interview-tab-meta">
                   {formatWhen(i.scheduled_at) || 'unscheduled'}
+                  {i.jobs.length > 1 ? ` · ${i.jobs.length} jobs` : ''}
                   {i.attendees.length ? ` · ${i.attendees.map(c => c.name.split(' ')[0]).join(', ')}` : ''}
                 </span>
               </button>
@@ -621,6 +682,7 @@ export default function InterviewsPage({ jobId, contacts, companies, canGenerate
             <InterviewPanel
               interview={selected}
               job={data.job}
+              jobs={jobs}
               types={types}
               contacts={contacts}
               companies={companyNames}
