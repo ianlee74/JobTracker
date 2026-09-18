@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
-import AddJobForm, { JobForm } from './AddJobForm.jsx';
+import AddJobPage, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
 import CompaniesPage from './CompaniesPage.jsx';
 import SettingsDialog from './SettingsDialog.jsx';
@@ -253,6 +253,11 @@ export default function App() {
   // on top of either and goes back to it.
   const [view, setView] = useState('jobs'); // jobs | companies
   const [activeCompany, setActiveCompany] = useState(null);
+  // The "Add a job" page replaces the job list until the job is added or cancelled.
+  const [addingJob, setAddingJob] = useState(false);
+  // Whether the server has Anthropic credentials (shows the Claude-backed
+  // actions in the job form).
+  const [aiReady, setAiReady] = useState(false);
   const [savedFilters] = useState(loadSavedFilters);
   const [showNotInterested, setShowNotInterested] = useState(savedFilters.showNotInterested);
   const [statusFilters, setStatusFilters] = useState(savedFilters.statusFilters); // empty = all statuses
@@ -305,6 +310,10 @@ export default function App() {
     const interval = setInterval(refresh, 30_000);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  useEffect(() => {
+    fetchAiStatus().then(s => setAiReady(Boolean(s.api_credentials_found))).catch(() => {});
+  }, []);
 
   useEffect(() => {
     try {
@@ -517,11 +526,12 @@ export default function App() {
 
   const showView = (next) => {
     setActiveCompany(null);
+    setAddingJob(false);
     setView(next);
   };
 
-  // The job list is showing (no company page on top, companies view not selected).
-  const jobsView = view === 'jobs' && !activeCompany;
+  // The job list is showing (no company page or add-job page on top, companies view not selected).
+  const jobsView = view === 'jobs' && !activeCompany && !addingJob;
   // Named in the company pages, since favorite / not-interested are theirs.
   const personName = people.find(p => p.id === personId)?.name;
 
@@ -673,7 +683,11 @@ export default function App() {
               ✉ Email Interested
             </button>
           )}
-          {jobsView && <AddJobForm jobs={jobs} companies={companies} knownSkills={skillOptions} onAdd={handleAdd} />}
+          {jobsView && (
+            <button className="add-job-btn" onClick={() => setAddingJob(true)} title="Open the Add a job page">
+              + Add job
+            </button>
+          )}
           {isAdmin && user.auth_enabled && (
             <button className="clear-btn settings-btn" onClick={() => setUsersOpen(true)} title="Manage users">👥</button>
           )}
@@ -697,6 +711,18 @@ export default function App() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {view === 'jobs' && !activeCompany && addingJob && (
+        <AddJobPage
+          jobs={jobs}
+          companies={companies}
+          knownSkills={skillOptions}
+          personId={personId}
+          canParse={aiReady}
+          onAdd={handleAdd}
+          onClose={() => setAddingJob(false)}
+        />
+      )}
 
       {activeCompany && (
         <CompanyPage
@@ -856,6 +882,8 @@ export default function App() {
             job={editingJob}
             companies={companies}
             knownSkills={skillOptions}
+            personId={personId}
+            canParse={aiReady}
             title={`Edit: ${editingJob.title}`}
             submitLabel="Save changes"
             onSubmit={handleEditSave}

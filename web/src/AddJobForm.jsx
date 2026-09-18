@@ -1,7 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { STATUSES, LEVELS, REJECTION_REASONS, parseSkills, parseNames } from './constants.js';
-import { uploadPosting } from './api.js';
-import FilePicker from './FilePicker.jsx';
+import { uploadPosting, researchJob } from './api.js';
 import SkillsPicker from './SkillsPicker.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -16,6 +15,10 @@ function normalizeUrl(raw) {
   }
   return s;
 }
+
+// Posting formats the server can read (and Claude can parse) — the same set
+// a standard resume may be in.
+const POSTING_ACCEPT = '.pdf,.docx,.md,.markdown,.txt,.html,.htm';
 
 const EMPTY = {
   title: '',
@@ -69,17 +72,42 @@ function formFromJob(job) {
   };
 }
 
+// What to tell the person once Claude has read the posting: whether the
+// fields were filled, what happened with the company, and how sure it was.
+function parseNotice(result) {
+  const parts = [];
+  if (!result.title && !result.company) {
+    parts.push(`Claude couldn't find a job posting in that document${result.note ? `: ${result.note}` : '.'}`);
+  } else {
+    parts.push('Filled in from the posting — check the fields before saving.');
+    if (result.company_status === 'created') {
+      parts.push(`${result.company} wasn't tracked yet, so it was added as a company and Claude is researching it in the background.`);
+    } else if (result.company_status === 'existing') {
+      parts.push(`Matched the tracked company ${result.company}.`);
+    }
+    if (result.confidence === 'low') parts.push('Claude had low confidence in this read.');
+  }
+  return parts.join(' ');
+}
+
 // Shared add/edit form. In edit mode (`job` given) submit sends only the
 // changed fields, so untouched values can't clobber concurrent MCP updates.
 // `companies` supplies the Referred-by suggestions: everyone who has referred
-// the candidate to the typed company's jobs before.
-export function JobForm({ jobs, job, companies = [], knownSkills = [], title, submitLabel, onSubmit, onClose }) {
+// the candidate to the typed company's jobs before. `canParse` (the server
+// has Anthropic credentials) shows the ✨ Parse button; the offer to parse an
+// uploaded posting is driven by the upload response instead.
+export function JobForm({ jobs, job, companies = [], knownSkills = [], personId, canParse = false, title, submitLabel, onSubmit, onClose }) {
   const [form, setForm] = useState(() => (job ? formFromJob(job) : { ...EMPTY, date_found: today() }));
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState(null);
+  // The just-uploaded posting's URL while the "fill in with Claude" offer is
+  // open; the offer disappears if the URL is edited.
+  const [parseOffer, setParseOffer] = useState(null);
+  const [parsing, setParsing] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const fileInput = useRef(null);
 
   const categories = useMemo(
     () => [...new Set(jobs.map(j => j.category).filter(Boolean))].sort(),
@@ -159,20 +187,57 @@ export function JobForm({ jobs, job, companies = [], knownSkills = [], title, su
     }
   };
 
-  // A file dragged in from File Explorer arrives as content without a path
-  // (browsers hide real paths), so the server stores a copy under
-  // data/postings/ and the job links to that copy's file:// URL.
-  const handleDroppedFile = async (file) => {
+  // A file chosen in the browser's file dialog or dragged in from File
+  // Explorer arrives as content without a path (browsers hide real paths), so
+  // the server stores a copy under data/postings/ and the job links to that
+  // copy's file:// URL. When the server can call Claude, it says so and the
+  // form offers to fill itself in from the posting.
+  const handleFile = async (file) => {
     setUploading(true);
     setError(null);
+    setParseOffer(null);
+    setNotice(null);
     try {
-      const { url } = await uploadPosting(file);
+      const { url, can_parse } = await uploadPosting(file);
       setForm(prev => ({ ...prev, url }));
+      if (can_parse) setParseOffer(url);
     } catch (err) {
       setError(err.message);
     } finally {
       setUploading(false);
-      setPickerOpen(false);
+    }
+  };
+
+  // Claude reads the posting and proposes the job fields; each non-empty
+  // proposal replaces what the form holds (the person reviews before saving).
+  // Nothing about the job is saved, but a company the posting names that
+  // isn't tracked yet is added and researched server-side.
+  const handleParse = async (url) => {
+    setParseOffer(null);
+    setParsing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await researchJob(url, personId);
+      if (result.title || result.company) {
+        setForm(prev => ({
+          ...prev,
+          title: result.title || prev.title,
+          company: result.company || prev.company,
+          level: result.level || prev.level,
+          category: result.category || prev.category,
+          salary: result.salary || prev.salary,
+          salary_min: result.salary_min != null ? String(result.salary_min) : prev.salary_min,
+          salary_max: result.salary_max != null ? String(result.salary_max) : prev.salary_max,
+          salary_uncertain: result.salary_uncertain,
+          note: result.note || prev.note
+        }));
+      }
+      setNotice(parseNotice(result));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setParsing(false);
     }
   };
 
@@ -187,9 +252,11 @@ export function JobForm({ jobs, job, companies = [], knownSkills = [], title, su
       e.preventDefault();
       setDragOver(false);
       const file = e.dataTransfer.files?.[0];
-      if (file) handleDroppedFile(file);
+      if (file) handleFile(file);
     }
   };
+
+  const busy = uploading || parsing;
 
   return (
     <form className="add-job-form" onSubmit={handleSubmit}>
@@ -213,11 +280,56 @@ export function JobForm({ jobs, job, companies = [], knownSkills = [], title, su
               onChange={set('url')}
               placeholder="https://..., a local file (file://... or C:\...), or drop a file here"
             />
-            <button type="button" className="clear-btn browse-btn" onClick={() => setPickerOpen(true)} disabled={uploading} title="Pick a local file">
-              {uploading ? 'Uploading…' : 'Browse…'}
+            <button
+              type="button"
+              className="clear-btn browse-btn"
+              onClick={() => {
+                fileInput.current.value = ''; // re-selecting the same file still fires change
+                fileInput.current.click();
+              }}
+              disabled={busy}
+              title="Pick the posting file with your browser's file dialog — the server keeps a copy"
+            >
+              {uploading ? 'Uploading…' : 'Choose file…'}
             </button>
+            {canParse && (
+              <button
+                type="button"
+                className="clear-btn browse-btn parse-btn"
+                onClick={() => handleParse(normalizeUrl(form.url))}
+                disabled={busy || !form.url.trim()}
+                title="Have Claude read the posting (a stored file or a web page) and fill in the form"
+              >
+                {parsing ? '⏳ Parsing…' : '✨ Parse'}
+              </button>
+            )}
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              accept={POSTING_ACCEPT}
+              onChange={e => {
+                const file = e.target.files[0];
+                if (file) handleFile(file);
+              }}
+            />
           </div>
         </label>
+        {parseOffer && parseOffer === form.url && (
+          <div className="parse-offer span-2" role="status">
+            <span>Posting uploaded. Have Claude read it and fill in the rest of the form?</span>
+            <div className="parse-offer-actions">
+              <button type="button" className="primary-btn" onClick={() => handleParse(parseOffer)}>✨ Yes, fill it in</button>
+              <button type="button" className="clear-btn" onClick={() => setParseOffer(null)}>No thanks</button>
+            </div>
+          </div>
+        )}
+        {parsing && (
+          <div className="parse-progress span-2">
+            Claude is reading the posting — this usually takes under a minute. A company it names that isn't tracked yet is added and researched in the background.
+          </div>
+        )}
+        {notice && <div className="parse-notice span-2" role="status">{notice}</div>}
         <label>
           Date found
           <input type="date" value={form.date_found} onChange={set('date_found')} />
@@ -332,46 +444,34 @@ export function JobForm({ jobs, job, companies = [], knownSkills = [], title, su
         </label>
       </div>
       <div className="form-actions">
-        <button type="submit" className="primary-btn" disabled={saving}>
+        <button type="submit" className="primary-btn" disabled={saving || busy}>
           {saving ? 'Saving…' : submitLabel}
         </button>
         <button type="button" className="clear-btn" onClick={onClose}>
           Cancel
         </button>
       </div>
-      {pickerOpen && (
-        <FilePicker
-          onClose={() => setPickerOpen(false)}
-          onPick={(p) => {
-            setForm(prev => ({ ...prev, url: normalizeUrl(p) }));
-            setPickerOpen(false);
-          }}
-          onDropFile={handleDroppedFile}
-        />
-      )}
     </form>
   );
 }
 
-export default function AddJobForm({ jobs, companies, knownSkills, onAdd }) {
-  const [open, setOpen] = useState(false);
-
-  if (!open) {
-    return (
-      <button className="add-job-btn" onClick={() => setOpen(true)}>
-        + Add job
-      </button>
-    );
-  }
+// The "Add a job" page: replaces the job list (like a company page) until the
+// job is added or the form is cancelled.
+export default function AddJobPage({ jobs, companies, knownSkills, personId, canParse, onAdd, onClose }) {
   return (
-    <JobForm
-      jobs={jobs}
-      companies={companies}
-      knownSkills={knownSkills}
-      title="Add a job"
-      submitLabel="Add job"
-      onSubmit={onAdd}
-      onClose={() => setOpen(false)}
-    />
+    <div className="company-page add-job-page">
+      <button className="clear-btn back-btn" onClick={onClose}>← Back to jobs</button>
+      <JobForm
+        jobs={jobs}
+        companies={companies}
+        knownSkills={knownSkills}
+        personId={personId}
+        canParse={canParse}
+        title="Add a job"
+        submitLabel="Add job"
+        onSubmit={onAdd}
+        onClose={onClose}
+      />
+    </div>
   );
 }

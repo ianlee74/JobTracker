@@ -80,7 +80,7 @@ await check('static SPA shell public -> 200', 200, status('/'));
 await check('admin sees all jobs', 2, jsonBody('/api/jobs', H(adminCookie)).then(j => j.length));
 await check('admin /api/me role', 'admin', jsonBody('/api/me', H(adminCookie)).then(u => u.role));
 await check('admin lists users', 3, jsonBody('/api/users', H(adminCookie)).then(u => u.length));
-await check('admin browse allowed', 200, status('/api/browse', H(adminCookie)));
+await check('admin job research needs a url -> 400', 400, status('/api/job/research', { method: 'POST', body: '{}', ...H(adminCookie) }));
 await check('admin can edit any field', 200, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ category: 'Infra' }), ...H(adminCookie) }));
 await check('admin cannot demote self', 400, status(`/api/users/${adminUser.id}`, { method: 'PATCH', body: JSON.stringify({ role: 'user' }), ...H(adminCookie) }));
 await check('admin cannot delete self', 400, status(`/api/users/${adminUser.id}`, { method: 'DELETE', ...H(adminCookie) }));
@@ -165,7 +165,7 @@ await check('clearing both flags leaves the company unflagged', { favorite: 0, n
 await check('profile fields survive flag changes', '$1.2B (FY2025)', jsonBody('/api/company?name=Globex', H(aliceCookie)).then(c => c.gross_revenue));
 await check('user cannot research company -> 403', 403, status('/api/company/research?name=Globex', { method: 'POST', body: '{}', ...H(aliceCookie) }));
 await check('research needs a company name -> 400', 400, status('/api/company/research', { method: 'POST', body: '{}', ...H(adminCookie) }));
-await check('user cannot browse -> 403', 403, status('/api/browse', H(aliceCookie)));
+await check('user cannot research a job posting -> 403', 403, status('/api/job/research', { method: 'POST', body: JSON.stringify({ url: 'https://example.com/job' }), ...H(aliceCookie) }));
 await check('user cannot list users -> 403', 403, status('/api/users', H(aliceCookie)));
 await check('user cannot open settings -> 403', 403, status(`/api/settings?person=${alice.id}`, H(aliceCookie)));
 await check('user cannot email digest -> 403', 403, status('/api/interested-email/preview', H(aliceCookie)));
