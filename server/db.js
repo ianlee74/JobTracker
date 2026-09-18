@@ -952,14 +952,15 @@ function normalizeScheduledAt(value) {
   return String(value ?? '').trim();
 }
 
-// The jobs an interview covers (jobs: the primary one first, then by title),
-// its attendees, and its Q&A.
+// The jobs an interview covers (full job rows, the primary one first, then
+// by title — the Interviews page shows each job's details), its attendees,
+// and its Q&A.
 function interviewRow(row) {
   if (!row) return null;
   return {
     ...row,
     jobs: db.prepare(`
-      SELECT j.id, j.person_id, j.title, j.company, j.status, j.url, j.level
+      SELECT j.*
       FROM interview_jobs ij JOIN jobs j ON j.id = ij.job_id
       WHERE ij.interview_id = ? ORDER BY (j.id = ?) DESC, j.title COLLATE NOCASE`).all(row.id, row.job_id),
     attendees: db.prepare('SELECT c.* FROM interview_attendees a JOIN contacts c ON c.id = a.contact_id WHERE a.interview_id = ? ORDER BY c.name COLLATE NOCASE').all(row.id),
