@@ -62,9 +62,11 @@ function contactLine(c) {
 export async function generateInterviewQuestions(interviewId) {
   const interview = getInterview(interviewId);
   if (!interview) throw new Error('Interview not found');
-  const job = getJob({ id: interview.job_id });
-  if (!job) throw new Error('Job not found');
-  const company = getCompany(job.company);
+  // Every job the interview covers (the primary one first), with each job's
+  // full row; an interview can cover several openings at once.
+  const jobs = interview.jobs.map(j => getJob({ id: j.id })).filter(Boolean);
+  if (!jobs.length) throw new Error('Job not found');
+  const companies = [...new Set(jobs.map(j => j.company))].map(name => getCompany(name));
 
   const lines = [
     `Today's date: ${new Date().toISOString().slice(0, 10)}`,
@@ -72,32 +74,42 @@ export async function generateInterviewQuestions(interviewId) {
     '# This interview',
     field('Type', interview.type || 'not specified')
     + field('Scheduled', interview.scheduled_at)
-    + (interview.attendees.length ? `Attendees:\n${interview.attendees.map(c => `- ${contactLine(c)}`).join('\n')}\n` : ''),
-    '# Job',
-    field('Title', job.title)
-    + field('Company', job.company)
-    + field('Seniority level', job.level)
-    + field('Category', job.category)
-    + field('Salary as listed', job.salary)
-    + field('Why the candidate thinks it fits', job.fit)
-    + field('Notes on the job', job.note)
-    + field("Candidate's own notes", job.user_note)
-    + field('Salary the candidate proposed in the application', job.proposed_salary != null ? `$${Number(job.proposed_salary).toLocaleString('en-US')}` : '')
-    + field('Application notes', job.application_notes)
-    + field('Referred by', job.referred_by)
-    + field('Posting URL', job.url),
-    '# Company',
-    field('Website', company.website)
-    + field('Type', company.company_type)
-    + field('Employee count', company.employee_count)
-    + field('Ticker symbol', company.ticker)
-    + field('Gross revenue', company.gross_revenue)
-    + field('Notes', company.note)
+    + (jobs.length > 1 ? `This one interview covers ${jobs.length} openings at once (listed below); propose questions that help the candidate compare and choose between them as well as questions about each.\n` : '')
+    + (interview.attendees.length ? `Attendees:\n${interview.attendees.map(c => `- ${contactLine(c)}`).join('\n')}\n` : '')
   ];
+  for (const job of jobs) {
+    lines.push(
+      jobs.length > 1 ? `# Job: ${job.title}` : '# Job',
+      field('Title', job.title)
+      + field('Company', job.company)
+      + field('Seniority level', job.level)
+      + field('Category', job.category)
+      + field('Salary as listed', job.salary)
+      + field('Why the candidate thinks it fits', job.fit)
+      + field('Notes on the job', job.note)
+      + field("Candidate's own notes", job.user_note)
+      + field('Salary the candidate proposed in the application', job.proposed_salary != null ? `$${Number(job.proposed_salary).toLocaleString('en-US')}` : '')
+      + field('Application notes', job.application_notes)
+      + field('Referred by', job.referred_by)
+      + field('Posting URL', job.url)
+    );
+  }
+  for (const company of companies) {
+    lines.push(
+      companies.length > 1 ? `# Company: ${company.name}` : '# Company',
+      field('Website', company.website)
+      + field('Type', company.company_type)
+      + field('Employee count', company.employee_count)
+      + field('Ticker symbol', company.ticker)
+      + field('Gross revenue', company.gross_revenue)
+      + field('Notes', company.note)
+    );
+  }
 
   // Everything the candidate has already asked or plans to ask, across every
-  // interview for this job, plus the company's standing list.
-  const others = listInterviews(job.id).filter(i => i.id !== interview.id);
+  // interview for these jobs, plus the companies' standing lists.
+  const seenIds = new Set([interview.id]);
+  const others = jobs.flatMap(j => listInterviews(j.id)).filter(i => !seenIds.has(i.id) && seenIds.add(i.id));
   const asked = others.flatMap(i => i.questions.map(q => ({ ...q, interview: i })));
   if (asked.length) {
     lines.push('# Questions already asked in earlier interviews for this job (with the answers received — do not repeat them; build on them)');
@@ -106,7 +118,7 @@ export async function generateInterviewQuestions(interviewId) {
     }
     lines.push('');
   }
-  const onFile = [...new Set([...interview.questions.map(q => q.question), ...parseQuestions(company.interview_questions)])];
+  const onFile = [...new Set([...interview.questions.map(q => q.question), ...companies.flatMap(c => parseQuestions(c.interview_questions))])];
   if (onFile.length) {
     lines.push('# Questions already on the candidate\'s list for this interview or the company (propose different ones)', ...onFile.map(q => `- ${q}`), '');
   }
@@ -118,16 +130,23 @@ export async function generateInterviewQuestions(interviewId) {
     lines.push('# Notes from the other interviews for this job', ...earlierNotes, '');
   }
 
-  const posting = await postingContext(job);
-  if (posting.note) lines.push(posting.note.replace(/; tailor from the job details above\.$/, '.').replace(/before writing\.$/, 'before proposing questions.'));
+  // Each job's posting: local files are embedded, web pages fetched by Claude.
+  const contextBlocks = [];
+  let fetchTools = null;
+  for (const job of jobs) {
+    const posting = await postingContext(job);
+    if (posting.block) contextBlocks.push(posting.block);
+    if (posting.tools) fetchTools = posting.tools;
+    if (posting.note) lines.push(posting.note.replace(/; tailor from the job details above\.$/, '.').replace(/before writing\.$/, 'before proposing questions.'));
+  }
 
   const skill = await loadSkill(SKILL);
   const tools = [
     { type: 'web_search_20260209', name: 'web_search', max_uses: 6 },
-    ...(posting.tools || [])
+    ...(fetchTools || [])
   ];
   const text = await generateDocument({
-    contextBlocks: posting.block ? [posting.block] : [],
+    contextBlocks,
     tools,
     instruction: lines.join('\n'),
     model: skill.model || DEFAULT_MODEL,

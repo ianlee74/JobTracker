@@ -769,6 +769,7 @@ export default function App() {
       {view === 'jobs' && !activeCompany && !addingJob && interviewJobId != null && (
         <InterviewsPage
           jobId={interviewJobId}
+          jobs={jobs}
           contacts={contacts}
           companies={companies}
           canGenerate={aiReady}

@@ -524,6 +524,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_interview_questions_interview ON interview_questions(interview_id, position);
 `);
 
+// Migration: one interview can cover several jobs (two openings on the same
+// team discussed in one call). interview_jobs links them; interviews.job_id
+// stays as the interview's first/primary job (and the one the interview is
+// reached through when a caller only knows one). Existing rows are linked
+// to their job_id.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS interview_jobs (
+    interview_id INTEGER NOT NULL,
+    job_id INTEGER NOT NULL,
+    PRIMARY KEY (interview_id, job_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_interview_jobs_job ON interview_jobs(job_id);
+  INSERT OR IGNORE INTO interview_jobs (interview_id, job_id) SELECT id, job_id FROM interviews;
+`);
+
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
 // numeric string (with $ and commas); anything else is an error, and an empty
 // value clears it.
@@ -650,7 +665,7 @@ export function listJobs({ personId, status, company, level, q, since, limit, ex
   // moved past Interviewing but still has its interview records.
   let sql = `SELECT jobs.*,
     (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = jobs.id) AS doc_kinds,
-    (SELECT COUNT(*) FROM interviews i WHERE i.job_id = jobs.id) AS interview_count,
+    (SELECT COUNT(*) FROM interview_jobs i WHERE i.job_id = jobs.id) AS interview_count,
     (SELECT name FROM people WHERE people.id = jobs.person_id) AS person_name
     FROM jobs`;
   if (where.length) sql += ' WHERE ' + where.join(' AND ');
@@ -824,7 +839,10 @@ export function deleteJob({ id, url, personId }) {
   db.prepare('DELETE FROM jobs WHERE id = ?').run(job.id);
   // Document rows go with the job; the files themselves are left on disk.
   db.prepare('DELETE FROM job_documents WHERE job_id = ?').run(job.id);
-  for (const interview of db.prepare('SELECT id FROM interviews WHERE job_id = ?').all(job.id)) deleteInterview(interview.id);
+  // Interviews are unlinked; one that covered no other job goes with it.
+  for (const { interview_id } of db.prepare('SELECT interview_id FROM interview_jobs WHERE job_id = ?').all(job.id)) {
+    unlinkInterviewJob(interview_id, job.id, { deleteWhenEmpty: true });
+  }
   return true;
 }
 
@@ -934,10 +952,16 @@ function normalizeScheduledAt(value) {
   return String(value ?? '').trim();
 }
 
+// The jobs an interview covers (jobs: the primary one first, then by title),
+// its attendees, and its Q&A.
 function interviewRow(row) {
   if (!row) return null;
   return {
     ...row,
+    jobs: db.prepare(`
+      SELECT j.id, j.person_id, j.title, j.company, j.status, j.url, j.level
+      FROM interview_jobs ij JOIN jobs j ON j.id = ij.job_id
+      WHERE ij.interview_id = ? ORDER BY (j.id = ?) DESC, j.title COLLATE NOCASE`).all(row.id, row.job_id),
     attendees: db.prepare('SELECT c.* FROM interview_attendees a JOIN contacts c ON c.id = a.contact_id WHERE a.interview_id = ? ORDER BY c.name COLLATE NOCASE').all(row.id),
     questions: listInterviewQuestions(row.id)
   };
@@ -946,19 +970,53 @@ function interviewRow(row) {
 // Unscheduled interviews sort last; scheduled ones in time order.
 const INTERVIEW_ORDER = "ORDER BY CASE WHEN scheduled_at = '' THEN 1 ELSE 0 END, scheduled_at, id";
 
+// Every interview linked to the job (as its primary job or as an extra one).
 export function listInterviews(jobId) {
-  return db.prepare(`SELECT * FROM interviews WHERE job_id = ? ${INTERVIEW_ORDER}`).all(jobId).map(interviewRow);
+  return db.prepare(`SELECT * FROM interviews WHERE id IN (SELECT interview_id FROM interview_jobs WHERE job_id = ?) ${INTERVIEW_ORDER}`).all(jobId).map(interviewRow);
 }
 
 export function getInterview(id) {
   return interviewRow(db.prepare('SELECT * FROM interviews WHERE id = ?').get(id));
 }
 
-export function addInterview(jobId, { type, scheduled_at, notes } = {}) {
+// Creates an interview for a job, optionally covering more jobs (job_ids).
+export function addInterview(jobId, { type, scheduled_at, notes, job_ids } = {}) {
   if (!getJob({ id: jobId })) throw new Error(`No job with id ${jobId}`);
   const info = db.prepare('INSERT INTO interviews (job_id, type, scheduled_at, notes) VALUES (?, ?, ?, ?)')
     .run(jobId, normalizeInterviewType(type), normalizeScheduledAt(scheduled_at), String(notes ?? ''));
+  db.prepare('INSERT INTO interview_jobs (interview_id, job_id) VALUES (?, ?)').run(info.lastInsertRowid, jobId);
+  for (const extra of job_ids || []) linkInterviewJob(info.lastInsertRowid, Number(extra));
   return getInterview(info.lastInsertRowid);
+}
+
+// Links another job to an interview. The jobs must belong to the same person
+// (an interview is one candidate's conversation). Already linked is a no-op.
+export function linkInterviewJob(interviewId, jobId) {
+  const interview = db.prepare('SELECT * FROM interviews WHERE id = ?').get(interviewId);
+  if (!interview) throw new Error(`No interview with id ${interviewId}`);
+  const job = getJob({ id: jobId });
+  if (!job) throw new Error(`No job with id ${jobId}`);
+  const owner = getJob({ id: interview.job_id });
+  if (owner && owner.person_id !== job.person_id) throw new Error('An interview can only cover jobs of the same person');
+  db.prepare('INSERT OR IGNORE INTO interview_jobs (interview_id, job_id) VALUES (?, ?)').run(interviewId, jobId);
+  return getInterview(interviewId);
+}
+
+// Unlinks a job from an interview. The interview's last job cannot be
+// removed (delete the interview instead) unless deleteWhenEmpty is set,
+// which job deletion uses. When the primary job is removed, another linked
+// job becomes primary.
+export function unlinkInterviewJob(interviewId, jobId, { deleteWhenEmpty = false } = {}) {
+  const interview = db.prepare('SELECT * FROM interviews WHERE id = ?').get(interviewId);
+  if (!interview) throw new Error(`No interview with id ${interviewId}`);
+  const others = db.prepare('SELECT job_id FROM interview_jobs WHERE interview_id = ? AND job_id != ?').all(interviewId, jobId).map(r => r.job_id);
+  if (!others.length) {
+    if (deleteWhenEmpty) { deleteInterview(interviewId); return null; }
+    throw new Error('An interview must cover at least one job — delete the interview instead');
+  }
+  db.prepare('DELETE FROM interview_jobs WHERE interview_id = ? AND job_id = ?').run(interviewId, jobId);
+  if (interview.job_id === jobId) db.prepare('UPDATE interviews SET job_id = ? WHERE id = ?').run(others[0], interviewId);
+  return getInterview(interviewId);
 }
 
 export function updateInterview(id, fields) {
@@ -979,6 +1037,7 @@ export function deleteInterview(id) {
   if (!db.prepare('SELECT 1 FROM interviews WHERE id = ?').get(id)) return false;
   db.prepare('DELETE FROM interview_questions WHERE interview_id = ?').run(id);
   db.prepare('DELETE FROM interview_attendees WHERE interview_id = ?').run(id);
+  db.prepare('DELETE FROM interview_jobs WHERE interview_id = ?').run(id);
   db.prepare('DELETE FROM interviews WHERE id = ?').run(id);
   return true;
 }

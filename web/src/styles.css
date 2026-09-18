@@ -1240,7 +1240,18 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
   font-size: 12px;
   font-weight: 600;
 }
-.attendee-title { font-weight: 400; color: var(--text-muted); }
+.attendee-title, .attendee-company { font-weight: 400; color: var(--text-muted); }
+.job-chip { background: rgba(37, 99, 235, 0.08); border-color: rgba(37, 99, 235, 0.3); }
+.job-picker {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  max-width: 100%;
+}
 .attendee-x { border: none; background: none; cursor: pointer; padding: 0 4px; font-size: 13px; font-family: inherit; }
 .attendee-x:hover { color: #dc2626; }
 .attendee-picker { display: flex; flex-direction: column; gap: 4px; max-width: 480px; }
