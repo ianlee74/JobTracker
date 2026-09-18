@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, fetchContacts, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, addContact, updateContact, deleteContact, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
+import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, fetchContacts, fetchJob, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, addContact, updateContact, deleteContact, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
 import { STATUSES, STATUS_COLORS, LEVELS, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobPage, { JobForm } from './AddJobForm.jsx';
@@ -263,6 +263,12 @@ export default function App() {
   // The Interviews page for one job (🎤 on its row) replaces the job list
   // until Back; a company page can open on top of it.
   const [interviewJobId, setInterviewJobId] = useState(null);
+  // /?editJob=<id> opens the app straight on that job's edit form (the ✎ on
+  // the Interviews page opens it in a new tab so the interview isn't
+  // disturbed). The job is fetched directly so the tab shows it whichever
+  // person is selected; saving or cancelling closes a tab we were opened
+  // into, else drops back to the job list.
+  const [editJobPage, setEditJobPage] = useState(null);
   // Whether the server has Anthropic credentials (shows the Claude-backed
   // actions in the job form).
   const [aiReady, setAiReady] = useState(false);
@@ -323,6 +329,24 @@ export default function App() {
   useEffect(() => {
     fetchAiStatus().then(s => setAiReady(Boolean(s.api_credentials_found))).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get('editJob'));
+    if (!Number.isInteger(id) || id <= 0) return;
+    fetchJob(id).then(job => {
+      setPersonId(job.person_id);
+      setEditJobPage(job);
+    }).catch(err => setError(`Couldn't open job ${id} for editing: ${err.message}`));
+  }, []);
+
+  const closeEditJobPage = () => {
+    if (window.opener) {
+      window.close();
+      return; // (falls through only if the browser refused to close the tab)
+    }
+    window.history.replaceState(null, '', window.location.pathname);
+    setEditJobPage(null);
+  };
 
   useEffect(() => {
     try {
@@ -576,7 +600,7 @@ export default function App() {
   };
 
   // The job list is showing (no company, add-job or interviews page on top, companies view not selected).
-  const jobsView = view === 'jobs' && !activeCompany && !addingJob && interviewJobId == null;
+  const jobsView = view === 'jobs' && !activeCompany && !addingJob && interviewJobId == null && !editJobPage;
   // Named in the company pages, since favorite / not-interested are theirs.
   const personName = people.find(p => p.id === personId)?.name;
 
@@ -766,7 +790,31 @@ export default function App() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      {view === 'jobs' && !activeCompany && !addingJob && interviewJobId != null && (
+      {editJobPage && !activeCompany && (
+        <div className="company-page add-job-page">
+          <button className="clear-btn back-btn" onClick={closeEditJobPage}>{window.opener ? '✕ Close' : '← Back to jobs'}</button>
+          <JobForm
+            jobs={jobs}
+            job={editJobPage}
+            companies={companies}
+            knownSkills={skillOptions}
+            personId={editJobPage.person_id}
+            canParse={aiReady}
+            title={`Edit: ${editJobPage.title}`}
+            submitLabel="Save changes"
+            onSubmit={async (fields) => {
+              if (!Object.keys(fields).length) return;
+              const updated = await updateJob(editJobPage.id, fields);
+              setEditJobPage(updated);
+              setJobs(prev => prev.map(j => (j.id === updated.id ? updated : j)));
+              flashSaved();
+            }}
+            onClose={closeEditJobPage}
+          />
+        </div>
+      )}
+
+      {view === 'jobs' && !activeCompany && !addingJob && interviewJobId != null && !editJobPage && (
         <InterviewsPage
           jobId={interviewJobId}
           jobs={jobs}

@@ -1242,9 +1242,19 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
 }
 .attendee-title, .attendee-company { font-weight: 400; color: var(--text-muted); }
 .job-chip { background: rgba(37, 99, 235, 0.08); border-color: rgba(37, 99, 235, 0.3); }
-/* Job switcher above the review cards when an interview covers several jobs. */
-.review-job-switch { flex-wrap: wrap; max-width: 960px; }
+/* Two columns when there's room: the company / job tabs on the left, the
+   interview on the right. The left column sticks so the job details stay in
+   view while scrolling a long Q&A. */
+.interviews-layout { display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.interviews-left, .interviews-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@media (min-width: 1100px) {
+  .interviews-layout { display: grid; grid-template-columns: minmax(340px, 2fr) minmax(0, 3fr); align-items: start; }
+  .interviews-left { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+}
+.interviews-page .company-card, .interviews-page .interview-tabs { max-width: none; }
+.review-job-switch { flex-wrap: wrap; align-self: flex-start; }
 .review-job-switch button { white-space: normal; text-align: left; }
+.review-edit { font-size: 15px; text-decoration: none; padding: 4px 8px; }
 .job-picker {
   padding: 5px 8px;
   border: 1px solid var(--border);
