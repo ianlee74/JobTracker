@@ -685,9 +685,12 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
             </div>
             <div className="note-block">
               <div className="note-label">{isAdmin ? 'Candidate notes' : 'My notes'}</div>
-              {isAdmin
-                ? <ReadOnlyNote text={job.user_note} />
-                : <NoteInput job={job} field="user_note" placeholder="Add your note..." onUpdate={onUpdate} />}
+              <NoteInput
+                job={job}
+                field="user_note"
+                placeholder={isAdmin ? 'Add a candidate note...' : 'Add your note...'}
+                onUpdate={onUpdate}
+              />
             </div>
           </div>
         </td>
