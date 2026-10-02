@@ -260,7 +260,10 @@ export function JobForm({ jobs, job, companies = [], knownSkills = [], personId,
 
   return (
     <form className="add-job-form" onSubmit={handleSubmit}>
-      <div className="form-title">{title}</div>
+      <div className="form-title">
+        {title}
+        {job?.id != null && <span className="job-number" title="Job number">#{job.id}</span>}
+      </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="form-grid">
         <label>

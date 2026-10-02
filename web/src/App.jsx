@@ -31,6 +31,7 @@ function salaryValue(job) {
 }
 
 const COMPARATORS = {
+  id: (a, b) => a.id - b.id,
   date_found: (a, b) => a.date_found.localeCompare(b.date_found),
   title: (a, b) => a.title.localeCompare(b.title),
   company: (a, b) => a.company.localeCompare(b.company),
@@ -652,6 +653,11 @@ export default function App() {
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;
       if (!text) return true;
+      // "#42" matches only job 42; a bare "42" matches job 42 as well as any
+      // text containing 42.
+      const idMatch = text.match(/^#\s*(\d+)$/);
+      if (idMatch) return job.id === Number(idMatch[1]);
+      if (/^\d+$/.test(text) && job.id === Number(text)) return true;
       return [job.title, job.company, job.category, job.fit, job.note, job.user_note, job.salary, job.rejection_reason, job.missing_skills, job.application_notes, job.referred_by]
         .some(v => (v || '').toLowerCase().includes(text));
     });
@@ -913,7 +919,7 @@ export default function App() {
         />
         <input
           type="text"
-          placeholder="Filter by company, title, category..."
+          placeholder="Filter by job #, company, title, category..."
           value={textFilter}
           onChange={e => setTextFilter(e.target.value)}
         />
