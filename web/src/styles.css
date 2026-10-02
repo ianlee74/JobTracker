@@ -317,6 +317,16 @@ th.sortable:hover { color: var(--text); }
 }
 
 .form-title { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+.job-number {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  user-select: all;
+}
 
 .form-grid {
   display: grid;
@@ -428,6 +438,7 @@ tr.note-row td { padding-top: 0; height: 1px; }
 tbody tr.main-row:nth-last-child(2) td { border-bottom: none; }
 
 .cell-date { white-space: nowrap; }
+.cell-id { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 .cell-title a {
   color: var(--accent);

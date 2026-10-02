@@ -562,6 +562,7 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
 
   const mainRow = (
     <tr className={wide ? 'main-row' : undefined}>
+      <td className="cell-id" rowSpan={span}>{job.id}</td>
       <td className="cell-date" rowSpan={span}>{job.date_found}</td>
       <td className="cell-title" rowSpan={span}>
         <a href={jobHref(job.url)} target="_blank" rel="noopener noreferrer">{job.title}</a>
@@ -723,8 +724,9 @@ export default function JobTable({ jobs, sort, onSort, knownSkills = [], promptI
       <table>
         <thead>
           <tr>
-            <SortableHeader label="Found" sortKey="date_found" sort={sort} onSort={onSort} width="8%" />
-            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width={wide ? '26%' : '23%'} />
+            <SortableHeader label="#" sortKey="id" sort={sort} onSort={onSort} width="4%" />
+            <SortableHeader label="Found" sortKey="date_found" sort={sort} onSort={onSort} width="7%" />
+            <SortableHeader label="Title" sortKey="title" sort={sort} onSort={onSort} width={wide ? '23%' : '20%'} />
             <SortableHeader label="Company" sortKey="company" sort={sort} onSort={onSort} width={wide ? '13%' : '11%'} />
             <SortableHeader label="Category" sortKey="category" sort={sort} onSort={onSort} width={wide ? '12%' : '11%'} />
             <SortableHeader label="Level" sortKey="level" sort={sort} onSort={onSort} width="9%" />
