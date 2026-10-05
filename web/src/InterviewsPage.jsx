@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { INTERVIEW_TYPES, STATUS_COLORS, formatDollars, formatSalaryRange, formatWhen, jobHref, parseQuestions, tickerHref } from './constants.js';
-import { fetchJobInterviews, fetchInterview, updateContact, addInterview, updateInterview, deleteInterview, addInterviewJob, removeInterviewJob, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
+import { documentUrl, fetchJobInterviews, fetchInterview, updateContact, addInterview, updateInterview, deleteInterview, addInterviewJob, removeInterviewJob, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { ContactForm } from './ContactsPage.jsx';
 
@@ -49,13 +49,33 @@ function Field({ label, children }) {
   );
 }
 
+// Links to what was sent: the posting, the resume (the tailored one, or the
+// standard resume when none was made for this job) and the cover letter.
+function JobLinks({ job, standardResume }) {
+  const kinds = (job.doc_kinds || '').split(',');
+  const links = [];
+  if (job.url) links.push({ key: 'posting', href: jobHref(job.url), label: 'Job posting', title: 'Open the job description' });
+  if (kinds.includes('resume')) {
+    links.push({ key: 'resume', href: documentUrl(job.id, 'resume'), label: 'Resume', title: 'The resume tailored for this job' });
+  } else if (standardResume) {
+    links.push({ key: 'resume', href: `${documentUrl(job.id, 'resume')}&standard=1`, label: 'Resume (standard)', title: 'No tailored resume was made for this job — your standard resume' });
+  }
+  if (kinds.includes('cover_letter')) links.push({ key: 'cover', href: documentUrl(job.id, 'cover_letter'), label: 'Cover letter', title: 'The cover letter for this job' });
+  if (!links.length) return null;
+  return (
+    <div className="review-links">
+      {links.map(l => <a key={l.key} href={l.href} target="_blank" rel="noopener noreferrer" title={l.title}>{l.label} ↗</a>)}
+    </div>
+  );
+}
+
 // What the candidate should have in front of them about the job: the
-// posting link, the basics, why it fits, notes, and what they said in the
-// application.
+// posting link, the documents sent, the basics, why it fits, notes, and what
+// they said in the application.
 // The ✎ opens the job's edit form in a new browser tab, so details learned
 // mid-interview (the salary band, say) can be recorded without leaving
 // this page; the page refreshes when it regains focus.
-function JobReview({ job, onOpenCompany }) {
+function JobReview({ job, standardResume, onOpenCompany }) {
   return (
     <div className="company-card review-card">
       <div className="review-header">
@@ -76,6 +96,7 @@ function JobReview({ job, onOpenCompany }) {
           ✎
         </a>
       </div>
+      <JobLinks job={job} standardResume={standardResume} />
       {(
         <div className="review-grid">
           <Field label="Level">{job.level}</Field>
@@ -269,12 +290,20 @@ function Notes({ interview, onSave }) {
   const [value, change, flush] = useAutosave(interview.notes, (notes) => onSave({ notes }));
   useEffect(() => { setMode(interview.notes ? 'preview' : 'edit'); }, [interview.id]);
   const html = useMemo(() => renderMarkdown(value), [value]);
+  // Open the editor at the preview's height so the box doesn't jump; the
+  // CSS min-height still applies to short notes.
+  const previewRef = useRef(null);
+  const [editHeight, setEditHeight] = useState(null);
+  const edit = () => {
+    if (previewRef.current) setEditHeight(previewRef.current.offsetHeight);
+    setMode('edit');
+  };
   return (
     <div className="interview-notes">
       <div className="section-head">
         <span className="review-label">Notes</span>
         <div className="view-switch small">
-          <button className={mode === 'edit' ? 'active' : ''} onClick={() => setMode('edit')}>Edit</button>
+          <button className={mode === 'edit' ? 'active' : ''} onClick={edit}>Edit</button>
           <button className={mode === 'preview' ? 'active' : ''} onClick={() => { flush(); setMode('preview'); }}>Preview</button>
         </div>
         <span className="hint">Markdown · saves automatically</span>
@@ -282,6 +311,7 @@ function Notes({ interview, onSave }) {
       {mode === 'edit' ? (
         <textarea
           className="notes-editor"
+          style={editHeight ? { height: editHeight } : undefined}
           value={value}
           onChange={e => change(e.target.value)}
           onBlur={flush}
@@ -289,8 +319,8 @@ function Notes({ interview, onSave }) {
         />
       ) : (
         value.trim()
-          ? <div className="markdown" onClick={() => setMode('edit')} dangerouslySetInnerHTML={{ __html: html }} />
-          : <div className="markdown markdown-empty" onClick={() => setMode('edit')}>No notes yet — click to write some.</div>
+          ? <div className="markdown" ref={previewRef} onClick={edit} dangerouslySetInnerHTML={{ __html: html }} />
+          : <div className="markdown markdown-empty" ref={previewRef} onClick={edit}>No notes yet — click to write some.</div>
       )}
     </div>
   );
@@ -622,7 +652,7 @@ function InterviewPanel({ interview, job, jobs, types, contacts, companies, canG
 // attendees, Markdown notes and Q&A below. Opened from the 🎤 button on a
 // job row; everything saves automatically.
 export default function InterviewsPage({ jobId, jobs = [], contacts, companies, canGenerate, onBack, onOpenCompany, onContactsChanged }) {
-  const [data, setData] = useState(null); // { job, company, interviews, types }
+  const [data, setData] = useState(null); // { job, company, interviews, types, standard_resume }
   const [selectedId, setSelectedId] = useState(null);
   const [error, setError] = useState(null);
 
@@ -736,7 +766,7 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
                 </button>
               ))}
             </div>
-            {reviewJob && <JobReview job={reviewJob} onOpenCompany={onOpenCompany} />}
+            {reviewJob && <JobReview job={reviewJob} standardResume={data.standard_resume} onOpenCompany={onOpenCompany} />}
             {leftCompany != null && (
               <CompanyReview
                 company={companyFor(leftCompany)}

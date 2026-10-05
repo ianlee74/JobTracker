@@ -1274,6 +1274,9 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
 .interviews-page .company-card, .interviews-page .interview-tabs { max-width: none; }
 .review-job-switch { flex-wrap: wrap; align-self: flex-start; }
 .review-job-switch button { white-space: normal; text-align: left; }
+.review-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: -4px 0 12px; font-size: 13px; }
+.review-links a { color: var(--accent); text-decoration: none; }
+.review-links a:hover { text-decoration: underline; }
 .review-edit { font-size: 15px; text-decoration: none; padding: 4px 8px; }
 .job-picker {
   padding: 5px 8px;
