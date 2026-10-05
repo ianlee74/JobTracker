@@ -608,8 +608,10 @@ function InterviewPanel({ interview, job, jobs, types, contacts, companies, canG
       </div>
       <InterviewJobs interview={interview} job={job} jobs={jobs} onChange={onChange} onError={onError} />
       <Attendees interview={interview} contacts={contacts} job={job} companies={companies} onChange={onChange} onContactsChanged={onContactsChanged} onError={onError} />
-      <Notes key={interview.id} interview={interview} onSave={save} />
-      <QuestionsSection interview={interview} canGenerate={canGenerate} onChange={onChange} onError={onError} />
+      <div className="interview-columns">
+        <Notes key={interview.id} interview={interview} onSave={save} />
+        <QuestionsSection interview={interview} canGenerate={canGenerate} onChange={onChange} onError={onError} />
+      </div>
     </div>
   );
 }
