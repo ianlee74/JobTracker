@@ -1267,6 +1267,9 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
   .interviews-layout { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(0, 2fr); align-items: start; }
   .interview-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
   .interviews-left { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  /* The column scrolls instead; without this a tall card (the company's
+     question list) squeezes the tab bar — overflow: hidden — to nothing. */
+  .interviews-left > * { flex-shrink: 0; }
 }
 .interviews-page .company-card, .interviews-page .interview-tabs { max-width: none; }
 .review-job-switch { flex-wrap: wrap; align-self: flex-start; }
