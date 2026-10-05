@@ -3,7 +3,7 @@ import { readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, linkInterviewJob, unlinkInterviewJob, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, jobDocKinds, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, linkInterviewJob, unlinkInterviewJob, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany, researchJob } from './research.js';
@@ -408,18 +408,26 @@ async function handleApi(req, res, url, user) {
   }
 
   // Serves a generated document inline (Markdown renders as plain text) or as
-  // a download with a friendly filename.
+  // a download with a friendly filename. With &standard=1, a job that has no
+  // tailored resume gets the person's standard resume instead — the one that
+  // was sent with the application.
   if (req.method === 'GET' && url.pathname === '/api/document') {
     const jobId = Number(url.searchParams.get('job'));
     const kind = url.searchParams.get('kind') || '';
-    const doc = Number.isInteger(jobId) ? getJobDocument(jobId, kind) : null;
-    if (!doc) return json(res, 404, { error: 'No such document' });
-    const job = getJob({ id: jobId });
+    const job = Number.isInteger(jobId) ? getJob({ id: jobId }) : null;
     // 404 (not 403) so another person's document ids aren't confirmed to exist.
-    if (!isAdmin && job.person_id !== user.person_id) return json(res, 404, { error: 'No such document' });
-    const base = documentsDir(getPerson(job.person_id));
-    const filePath = path.resolve(base, doc.path);
-    if (!filePath.startsWith(path.resolve(base))) return json(res, 403, { error: 'Forbidden' });
+    if (!job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'No such document' });
+    const doc = getJobDocument(jobId, kind);
+    const standard = !doc && kind === 'resume' && url.searchParams.get('standard') ? getPerson(job.person_id).resume_path : '';
+    if (!doc && !standard) return json(res, 404, { error: 'No such document' });
+    let filePath;
+    if (doc) {
+      const base = documentsDir(getPerson(job.person_id));
+      filePath = path.resolve(base, doc.path);
+      if (!filePath.startsWith(path.resolve(base))) return json(res, 403, { error: 'Forbidden' });
+    } else {
+      filePath = path.resolve(standard);
+    }
     let content;
     try {
       content = await readFile(filePath);
@@ -658,7 +666,16 @@ async function handleApi(req, res, url, user) {
     const job = getJob({ id });
     if (!job || (!isAdmin && job.person_id !== user.person_id)) return json(res, 404, { error: 'Job not found' });
     if (req.method === 'GET') {
-      return json(res, 200, { job, company: getCompany(job.company), interviews: listInterviews(id), types: INTERVIEW_TYPES });
+      // standard_resume: whether the person's standard resume exists, so the
+      // page can link it for jobs that weren't sent a tailored one.
+      const resumePath = getPerson(job.person_id)?.resume_path;
+      return json(res, 200, {
+        job: { ...job, doc_kinds: jobDocKinds(id) },
+        company: getCompany(job.company),
+        interviews: listInterviews(id),
+        types: INTERVIEW_TYPES,
+        standard_resume: Boolean(resumePath) && existsSync(path.resolve(resumePath))
+      });
     }
     if (req.method === 'POST') {
       try {

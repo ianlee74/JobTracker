@@ -626,6 +626,11 @@ export function getJobDocument(jobId, kind) {
   return db.prepare('SELECT * FROM job_documents WHERE job_id = ? AND kind = ?').get(jobId, kind) ?? null;
 }
 
+// Comma-joined kinds of a job's documents, like listJobs' doc_kinds column.
+export function jobDocKinds(jobId) {
+  return db.prepare('SELECT GROUP_CONCAT(kind) AS kinds FROM job_documents WHERE job_id = ?').get(jobId).kinds ?? '';
+}
+
 export function upsertJobDocument(jobId, kind, relPath) {
   db.prepare(`
     INSERT INTO job_documents (job_id, kind, path) VALUES (?, ?, ?)
@@ -952,15 +957,16 @@ function normalizeScheduledAt(value) {
   return String(value ?? '').trim();
 }
 
-// The jobs an interview covers (full job rows, the primary one first, then
-// by title — the Interviews page shows each job's details), its attendees,
+// The jobs an interview covers (full job rows plus doc_kinds, the primary one
+// first, then by title — the Interviews page shows each job's details and
+// links its documents), its attendees,
 // and its Q&A.
 function interviewRow(row) {
   if (!row) return null;
   return {
     ...row,
     jobs: db.prepare(`
-      SELECT j.*
+      SELECT j.*, (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = j.id) AS doc_kinds
       FROM interview_jobs ij JOIN jobs j ON j.id = ij.job_id
       WHERE ij.interview_id = ? ORDER BY (j.id = ?) DESC, j.title COLLATE NOCASE`).all(row.id, row.job_id),
     attendees: db.prepare('SELECT c.* FROM interview_attendees a JOIN contacts c ON c.id = a.contact_id WHERE a.interview_id = ? ORDER BY c.name COLLATE NOCASE').all(row.id),
