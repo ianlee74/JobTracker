@@ -141,14 +141,15 @@ server.registerTool('get_job', {
 
 server.registerTool('add_jobs', {
   title: 'Add jobs',
-  description: 'Add one or more new job opportunities to the tracker for one person. Jobs whose URL that person already tracks are skipped (their existing status and notes are preserved), so it is always safe to send the full day\'s findings.',
+  description: 'Add one or more new job opportunities to the tracker for one person. Jobs whose URL that person already tracks are skipped (their existing status and notes are preserved), so it is always safe to send the full day\'s findings. Jobs whose title the person already marked "Not Moving Forward" at the same company (matched ignoring case and punctuation) are also skipped as reposts and listed in skipped_previously_rejected — pass include_previously_rejected: true to add them anyway.',
   inputSchema: {
     jobs: z.array(z.object(jobInput)).describe('Jobs to add'),
-    person: personArg
+    person: personArg,
+    include_previously_rejected: z.boolean().optional().describe('true adds jobs even when the person already has the same title at the same company marked "Not Moving Forward". Default false.')
   }
-}, async ({ jobs, person }) => {
-  const result = addJobs(jobs, resolvePerson(person).id);
-  return ok({ added: result.added, skipped_existing: result.skipped, added_jobs: result.jobs });
+}, async ({ jobs, person, include_previously_rejected }) => {
+  const result = addJobs(jobs, resolvePerson(person).id, { skipPreviouslyRejected: !include_previously_rejected });
+  return ok({ added: result.added, skipped_existing: result.skipped, skipped_previously_rejected: result.skippedRejected, added_jobs: result.jobs });
 });
 
 server.registerTool('update_job', {

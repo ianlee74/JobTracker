@@ -806,20 +806,41 @@ export function isUrlTracked(url) {
   return Boolean(db.prepare('SELECT 1 FROM jobs WHERE url = ? LIMIT 1').get(url));
 }
 
+// Folds a job title or company name to a comparison key, so "Sr. Engineer – Platform"
+// and "sr engineer platform" match: lower-case, punctuation runs become one space.
+function matchKey(text) {
+  return String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 // Adds jobs, skipping any whose URL that person already tracks (so a daily run
 // can safely re-send an old suggestion without clobbering its status/note).
 // Each job may carry its own person_id; defaultPersonId covers the rest.
-export function addJobs(jobs, defaultPersonId) {
+// With skipPreviouslyRejected, a job is also skipped when the person already has
+// the same title at the same company marked "Not Moving Forward" — job boards
+// repost the same role under new URLs, and a search run shouldn't resurface it.
+export function addJobs(jobs, defaultPersonId, { skipPreviouslyRejected = false } = {}) {
+  const rejectedKeys = new Map(); // personId -> Set of "company|title" keys
+  const rejectedFor = (personId) => {
+    if (!rejectedKeys.has(personId)) {
+      const rows = db.prepare(`SELECT company, title FROM jobs WHERE person_id = ? AND status = 'Not Moving Forward'`).all(personId);
+      rejectedKeys.set(personId, new Set(rows.map(r => `${matchKey(r.company)}|${matchKey(r.title)}`)));
+    }
+    return rejectedKeys.get(personId);
+  };
   const insert = db.prepare(`
     INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills, proposed_salary, application_notes, referred_by, status_changed_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(person_id, url) DO NOTHING
   `);
-  const results = { added: 0, skipped: 0, jobs: [] };
+  const results = { added: 0, skipped: 0, skippedRejected: [], jobs: [] };
   for (const job of jobs) {
     const personId = job.person_id ?? defaultPersonId;
     if (personId == null || !getPerson(personId)) {
       throw new Error(`Unknown person id "${personId}" — every job needs a valid person`);
+    }
+    if (skipPreviouslyRejected && rejectedFor(personId).has(`${matchKey(job.company)}|${matchKey(job.title)}`)) {
+      results.skippedRejected.push({ title: job.title, company: job.company, url: job.url });
+      continue;
     }
     const status = STATUSES.includes(job.status) ? job.status : 'new';
     const reason = status === 'Not Moving Forward' ? normalizeRejectionReason(job.rejection_reason) : '';

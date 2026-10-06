@@ -55,7 +55,7 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 
 | Tool | Purpose |
 |---|---|
-| `add_jobs` | Add new opportunities for one person (bulk); URLs that person already tracks are skipped |
+| `add_jobs` | Add new opportunities for one person (bulk); URLs that person already tracks are skipped, and so are titles they already marked Not Moving Forward at the same company (reposts) unless `include_previously_rejected` is set |
 | `list_jobs` | List/filter by person, status (one or an array), company, text search, or date |
 | `get_job` | Fetch one job by id or URL |
 | `update_job` | Change status, rejection reason / missing skills, notes (replace or append), salary, etc. |
