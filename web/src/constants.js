@@ -1,7 +1,10 @@
-export const STATUSES = ['new', 'Interested', 'Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available'];
+export const STATUSES = ['new', 'Interested', 'Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available', 'Duplicate'];
 
 // Statuses that end a job's pipeline without it going anywhere.
-export const CLOSED_STATUSES = ['Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available'];
+export const CLOSED_STATUSES = ['Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available', 'Duplicate'];
+
+// Statuses hidden from the job list unless picked in the status filter.
+export const HIDDEN_STATUSES = ['Duplicate'];
 
 // Statuses at or past "Applied" — the application details belong to these.
 export const APPLIED_STATUSES = ['Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew'];
@@ -105,5 +108,6 @@ export const STATUS_COLORS = {
   'Rejected': '#db2777',
   'Withdrew': '#78716c',
   'Not Moving Forward': '#9ca3af',
-  'No Longer Available': '#b91c1c'
+  'No Longer Available': '#b91c1c',
+  'Duplicate': '#94a3b8'
 };

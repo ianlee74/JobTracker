@@ -115,6 +115,8 @@ const beforeStatus = db.getJob({ id: defaultJob.id }).status_changed_at;
 await check('a non-status edit keeps status_changed_at', beforeStatus, jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ user_note: 'hello' }), ...H(adminCookie) }).then(j => j.status_changed_at));
 await check('a status change stamps status_changed_at and clears the reason', { changed: true, reason: '' }, jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Rejected' }), ...H(adminCookie) }).then(j => ({ changed: j.status_changed_at > beforeStatus, reason: j.rejection_reason })));
 await check('new statuses accepted', 'No Response', jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'No Response' }), ...H(adminCookie) }).then(j => j.status));
+await check('a job can be marked Duplicate', 'Duplicate', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Duplicate' }), ...H(aliceCookie) }).then(j => j.status));
+await check('a Duplicate URL is still skipped by add_jobs', 1, db.addJobs([{ title: 'Senior Dev', company: 'Globex', url: 'https://globex.example/2', person_id: alice.id }]).skipped);
 await check('stats count the new statuses', 1, jsonBody(`/api/stats?person=${defaultPerson.id}`, H(adminCookie)).then(s => s.byStatus['No Response']));
 
 await check('skills search hits the job', 1,jsonBody('/api/jobs?q=terraform', H(adminCookie)).then(j => j.length));
