@@ -18,7 +18,7 @@ const server = new McpServer({
 const statusEnum = z.enum(STATUSES);
 
 // What each non-obvious status means, so the model picks the right one.
-const STATUS_GUIDE = '"Not Moving Forward" = the candidate passed on the job (give a rejection_reason); "Rejected" = the employer turned the candidate down; "Withdrew" = the candidate dropped out after applying; "No Response" = an application that has gone quiet; "Accepted" / "Declined Offer" close out an "Offer"; "No Longer Available" = the posting closed or was filled.';
+const STATUS_GUIDE = '"Not Moving Forward" = the candidate passed on the job (give a rejection_reason); "Rejected" = the employer turned the candidate down; "Withdrew" = the candidate dropped out after applying; "No Response" = an application that has gone quiet; "Accepted" / "Declined Offer" close out an "Offer"; "No Longer Available" = the posting closed or was filled; "Duplicate" = another copy of a job already tracked (a second URL for the same req) — kept so the URL is never re-added.';
 
 const personArg = z.string().optional().describe('Person the jobs belong to — their name (or numeric id). Optional while only one person is tracked; see list_people.');
 
@@ -192,7 +192,7 @@ server.registerTool('update_job', {
 
 server.registerTool('delete_job', {
   title: 'Delete a job',
-  description: 'Permanently remove a job from the tracker. Prefer setting status to "Not Moving Forward" unless the entry is a mistake/duplicate.',
+  description: 'Permanently remove a job from the tracker. Prefer setting status to "Not Moving Forward" — or "Duplicate" for a second copy of a tracked job, which keeps its URL so add_jobs keeps skipping it. Delete only entries that are plain mistakes.',
   inputSchema: {
     id: z.number().int().optional().describe('Job id'),
     url: z.string().optional().describe('Job posting URL (alternative to id)'),

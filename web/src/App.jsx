@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, fetchContacts, fetchJob, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, addContact, updateContact, deleteContact, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
-import { STATUSES, CLOSED_STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, CUSTOM_REASONS_LIST_ID, parseSkills, parseNames } from './constants.js';
+import { STATUSES, CLOSED_STATUSES, HIDDEN_STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, CUSTOM_REASONS_LIST_ID, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobPage, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
@@ -660,6 +660,8 @@ export default function App() {
     const filtered = jobs.filter(job => {
       if (!showNotInterested && flaggedCompanies.has(job.company)) return false;
       if (statusFilters.length && !statusFilters.includes(job.status) && !pinnedIds.has(job.id)) return false;
+      // Duplicates are ignored unless asked for by name.
+      if (!statusFilters.length && HIDDEN_STATUSES.includes(job.status) && !pinnedIds.has(job.id)) return false;
       if (levelFilter && job.level !== levelFilter) return false;
       if (dateFilter === 'day' && job.date_found !== customDate) return false;
       if (dateMin && job.date_found < dateMin) return false;

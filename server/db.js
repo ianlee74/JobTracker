@@ -11,8 +11,10 @@ export const DB_PATH = path.join(DATA_DIR, 'jobtracker.db');
 // Pipeline order (also the UI's sort order). "Not Moving Forward" is the
 // candidate passing on a job; "Rejected" is the employer passing on them;
 // "Withdrew" is the candidate dropping out after applying. "No Response" is an
-// application that has gone quiet.
-export const STATUSES = ['new', 'Interested', 'Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available'];
+// application that has gone quiet. "Duplicate" is a second copy of a job
+// already tracked (another URL for the same req); it is kept rather than
+// deleted so the daily search's URL dedupe keeps skipping it.
+export const STATUSES = ['new', 'Interested', 'Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available', 'Duplicate'];
 
 // Preset reasons for "Not Moving Forward"; a custom free-text reason is also
 // allowed (the UI files it under "Other").
