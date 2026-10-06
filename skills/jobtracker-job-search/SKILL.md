@@ -28,7 +28,7 @@ This skill is the engine. A **person skill** (e.g. `ian-job-search`, `gabe-job-s
 
 ## Step 0 — Learn from the tracker (before searching)
 
-Call `list_jobs` with a `status` filter array containing `interested`, `applied`, (large limit, e.g. 200) and `list_companies` for the person and review both.
+Call `list_jobs` with a `status` filter array containing `interested`, `applied`, `Not Moving Forward` (large limit, e.g. 200) and `list_companies` for the person and review both.
 
 **Large outputs:** when a person has 100+ tracked jobs, `list_jobs` output can exceed the tool-result limit and get written to a file instead (the error message gives the path). Don't retry with a smaller limit and lose data — read and filter the persisted JSON from the shell (`find /sessions/*/mnt -iname "*list_jobs*"`, then `python3`/`jq`) to pull out only what you need: status counts, the Interested/Applied/Interviewing/Offer rows, a sample of Not Moving Forward reasons, and the not-interested company list.
 
@@ -38,6 +38,7 @@ From the data:
 - **`not_interested: true` companies:** never search for, verify, or add jobs from these, even if a posting looks like a perfect fit. (Both company flags are per person — `list_companies` reports the flags of the `person` you pass, so always pass it.)
 - **`favorite: true` companies:** give their careers pages an extra look, even outside the category priorities.
 - **Dedupe lists:** build a list of already-tracked company names, and already-tracked URLs for any company you'll search deeply. `add_jobs` skips exact URL duplicates automatically, so this is about not wasting search effort re-finding the same req, not correctness.
+- **Previously rejected titles:** build a list of company + job title pairs the person has marked Not Moving Forward (whatever the `rejection_reason`). The same role is often reposted under a new URL; treat a posting with the same title at the same company as a duplicate and drop it, rather than resurfacing it. `add_jobs` also skips these server-side (ignoring case and punctuation) and lists them in `skipped_previously_rejected`, but filtering during search saves the verification effort. A genuinely different title at that company is fine.
 
 ## Step 1 — Search and verify
 
@@ -46,7 +47,7 @@ Using web search and fetch, find CURRENT, LIVE, OPEN postings across the person 
 **Verify every candidate on the employer's own ATS page** (Greenhouse/Lever/Ashby/Workday/company careers site) — not a search snippet or aggregator. LinkedIn/Indeed listings go stale fast; open the real page to confirm the req is still live. For each candidate, check every hard requirement from the person skill. When a posting is silent on something that matters (salary, employment type, benefits eligibility, remote eligibility), record that it needs verification rather than assuming it qualifies — use `salary_confidence: "flag"` for undisclosed-but-plausible salaries, and put other open questions in the `fit`/note text.
 
 **Parallelize with subagents (if available), but keep them read-only.** Splitting the search by category or target company into parallel subagents finds more and verifies faster. When you do:
-- Give each agent the Step 0 signal relevant to its slice (positive/negative patterns, favorite companies), the hard requirements, the already-tracked company list, and the already-tracked URL list for any company it will search deeply.
+- Give each agent the Step 0 signal relevant to its slice (positive/negative patterns, favorite companies), the hard requirements, the already-tracked company list, the previously rejected company + title list, and the already-tracked URL list for any company it will search deeply.
 - **Tell each agent explicitly to report findings back as text only and NOT to call any jobtracker write tool** (`add_jobs`, `update_job`, `update_company`, `delete_job`), even if it has access. A subagent that writes on its own bypasses Step 2 curation and can leave weak or duplicate entries in the tracker — and delete/undo on a live tracker isn't guaranteed, so prevention beats cleanup. All writes happen in Step 3 from the orchestrating turn.
 - Ask each agent to report, per candidate: title, company, exact URL, salary/range + confidence, location/remote note, employment type + benefits note, and a one-line fit rationale — plus which candidates it checked and excluded (closed, wrong location, part-time, stack mismatch, etc.) so you can see it verified rather than padded.
 
