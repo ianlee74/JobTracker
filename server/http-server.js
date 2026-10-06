@@ -3,7 +3,7 @@ import { readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, jobDocKinds, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, linkInterviewJob, unlinkInterviewJob, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
+import { listJobs, getJob, isUrlTracked, personTracksUrl, addJobs, updateJob, deleteJob, getStats, listMissingSkills, listCompanies, getCompany, addCompany, upsertCompany, listPeople, getPerson, addPerson, updatePerson, deletePerson, onlyPerson, getJobDocument, jobDocKinds, listUsers, addUser, updateUser, deleteUser, getUser, listContacts, getContact, getContactPhoto, addContact, updateContact, deleteContact, listInterviews, getInterview, addInterview, updateInterview, deleteInterview, linkInterviewJob, unlinkInterviewJob, addInterviewAttendee, removeInterviewAttendee, getInterviewQuestion, addInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, reorderInterviewQuestions, USER_EDITABLE_JOB_FIELDS, COMPANY_FLAGS, STATUSES, LEVELS, INTERVIEW_TYPES, DB_PATH } from './db.js';
 import { generateJobDocuments, saveUploadedDocument, deleteJobDocumentFiles, documentsDir, hasApiCredentials } from './generate.js';
 import { composeInterestedEmail, defaultBaseUrl } from './email.js';
 import { researchCompany, researchJob } from './research.js';
@@ -633,6 +633,14 @@ async function handleApi(req, res, url, user) {
         return json(res, /already exists/.test(err.message) ? 409 : 400, { error: err.message });
       }
     }
+  }
+  // A contact's photo (set or removed through the contact's `photo` field).
+  // The UI appends ?v=<photo_updated_at>, so a URL's image never changes.
+  if (parts[0] === 'api' && parts[1] === 'contacts' && parts[3] === 'photo' && parts.length === 4 && req.method === 'GET') {
+    const photo = getContactPhoto(Number(parts[2]));
+    if (!photo) return json(res, 404, { error: 'No photo' });
+    res.writeHead(200, { 'Content-Type': photo.mime, 'Content-Length': photo.data.length, 'Cache-Control': 'private, max-age=31536000, immutable' });
+    return res.end(photo.data);
   }
   if (parts[0] === 'api' && parts[1] === 'contacts' && parts.length === 3) {
     const id = Number(parts[2]);

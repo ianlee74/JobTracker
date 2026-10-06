@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { INTERVIEW_TYPES, STATUS_COLORS, formatDollars, formatSalaryRange, formatWhen, jobHref, parseQuestions, tickerHref } from './constants.js';
 import { documentUrl, fetchJobInterviews, fetchInterview, updateContact, addInterview, updateInterview, deleteInterview, addInterviewJob, removeInterviewJob, addInterviewAttendee, removeInterviewAttendee, addInterviewQuestions, reorderInterviewQuestions, updateInterviewQuestion, deleteInterviewQuestion, generateInterviewQuestions } from './api.js';
 import { renderMarkdown } from './markdown.js';
-import { ContactForm } from './ContactsPage.jsx';
+import { ContactForm, ContactAvatar } from './ContactsPage.jsx';
 
 // Autosave helper: returns [value, setValue, flush] for a text field whose
 // saves are debounced while typing and flushed on blur/unmount. `stored` is
@@ -199,12 +199,13 @@ function Attendees({ interview, contacts, job, companies, onChange, onContactsCh
       <span className="review-label">Attendees</span>
       <div className="attendee-chips">
         {interview.attendees.map(c => (
-          <span key={c.id} className="attendee-chip">
+          <span key={c.id} className="attendee-chip attendee-chip-contact">
             <button
               className="attendee-name"
               onClick={() => setEditing(c)}
               title={`${[c.title, c.company, c.email, c.phone].filter(Boolean).join(' · ') || c.name}\n\nClick to edit this contact`}
             >
+              <ContactAvatar contact={c} size={22} />
               {c.name}
               {c.title ? <span className="attendee-title"> · {c.title}</span> : null}
               {c.company ? <span className="attendee-company"> @ {c.company}</span> : null}
