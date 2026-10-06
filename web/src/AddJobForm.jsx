@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { STATUSES, LEVELS, REJECTION_REASONS, parseSkills, parseNames } from './constants.js';
+import { STATUSES, APPLIED_STATUSES, LEVELS, REJECTION_REASONS, CUSTOM_REASONS_LIST_ID, parseSkills, parseNames } from './constants.js';
 import { uploadPosting, researchJob } from './api.js';
 import SkillsPicker from './SkillsPicker.jsx';
 
@@ -41,10 +41,6 @@ const EMPTY = {
   referred_by: '',
   note: ''
 };
-
-// Statuses at or past "Applied", where the application details are shown
-// even when still empty.
-const APPLIED_STATUSES = ['Applied', 'Interviewing', 'Offer'];
 
 function formFromJob(job) {
   const stored = job.rejection_reason || '';
@@ -402,7 +398,7 @@ export function JobForm({ jobs, job, companies = [], knownSkills = [], personId,
         {form.status === 'Not Moving Forward' && form.rejection_reason === 'Other' && (
           <label className="span-2">
             Other reason
-            <input value={form.rejection_other} onChange={set('rejection_other')} placeholder="Enter a reason..." />
+            <input value={form.rejection_other} onChange={set('rejection_other')} list={CUSTOM_REASONS_LIST_ID} placeholder="Enter a reason..." />
           </label>
         )}
         {form.status === 'Not Moving Forward' && form.rejection_reason === 'Not Qualified' && (

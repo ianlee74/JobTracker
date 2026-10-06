@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, formatSalaryRange, formatDollars, jobHref, parseSkills } from './constants.js';
+import { STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, STALE_APPLIED_DAYS, CUSTOM_REASONS_LIST_ID, formatSalaryRange, formatDollars, jobHref, parseSkills } from './constants.js';
 import { documentUrl } from './api.js';
 import SkillsPicker from './SkillsPicker.jsx';
 
@@ -163,6 +163,7 @@ function RejectionReason({ job, knownSkills, onUpdate, onDone }) {
         <input
           ref={box}
           className="reason-input"
+          list={CUSTOM_REASONS_LIST_ID}
           placeholder="Enter a reason..."
           value={text}
           onChange={handleTextChange}
@@ -554,6 +555,12 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
   // The Interviews page is offered while interviewing, and stays reachable
   // afterwards (Offer, Not Moving Forward, …) once interviews were recorded.
   const showInterviews = job.status === 'Interviewing' || job.interview_count > 0;
+  // Days an "Applied" job has gone without a status change, once that's long
+  // enough to suggest the application has gone quiet.
+  const appliedDays = job.status === 'Applied' && job.status_changed_at
+    ? Math.floor((Date.now() - Date.parse(job.status_changed_at)) / 86_400_000)
+    : 0;
+  const staleApplied = appliedDays >= STALE_APPLIED_DAYS;
   const salaryFlagged = job.salary_confidence === 'flag';
   const salaryRange = formatSalaryRange(job);
   const span = wide ? 2 : undefined;
@@ -607,6 +614,16 @@ function JobRow({ job, wide, isAdmin, knownSkills, referrals, promptOpen, onUpda
         >
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {staleApplied && (
+          <button
+            type="button"
+            className="stale-applied"
+            onClick={() => onUpdate(job.id, { status: 'No Response' })}
+            title='Mark this application "No Response"'
+          >
+            No reply in {appliedDays}d — mark No Response?
+          </button>
+        )}
         {job.status === 'Not Moving Forward' && <RejectionReason job={job} knownSkills={knownSkills} onUpdate={onUpdate} onDone={onPromptDone} />}
         {showApplied && <AppliedDetails job={job} prompt={promptOpen && job.status === 'Applied'} onUpdate={onUpdate} onDone={onPromptDone} />}
         {showInterviews && (

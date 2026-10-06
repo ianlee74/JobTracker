@@ -17,6 +17,9 @@ const server = new McpServer({
 
 const statusEnum = z.enum(STATUSES);
 
+// What each non-obvious status means, so the model picks the right one.
+const STATUS_GUIDE = '"Not Moving Forward" = the candidate passed on the job (give a rejection_reason); "Rejected" = the employer turned the candidate down; "Withdrew" = the candidate dropped out after applying; "No Response" = an application that has gone quiet; "Accepted" / "Declined Offer" close out an "Offer"; "No Longer Available" = the posting closed or was filled.';
+
 const personArg = z.string().optional().describe('Person the jobs belong to — their name (or numeric id). Optional while only one person is tracked; see list_people.');
 
 // Resolve a person argument (name or id). When omitted: the only person if
@@ -55,7 +58,7 @@ const jobInput = {
   salary_confidence: z.enum(['ok', 'flag']).optional().describe('"flag" if salary is undisclosed/inferred/uncertain'),
   fit: z.string().optional().describe('Why this job fits the candidate'),
   level: z.string().optional().describe(`Seniority level, ideally one of: ${LEVELS.join(', ')}. If omitted it is classified automatically from the job title.`),
-  status: statusEnum.optional().describe('Initial status (defaults to "new")'),
+  status: statusEnum.optional().describe(`Initial status (defaults to "new"). ${STATUS_GUIDE}`),
   note: z.string().optional().describe('Free-form note'),
   rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" (only stored with that status). Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else.`),
   missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only stored when rejection_reason is "Not Qualified".'),
@@ -155,7 +158,7 @@ server.registerTool('update_job', {
     id: z.number().int().optional().describe('Job id'),
     url: z.string().optional().describe('Job posting URL (alternative to id)'),
     person: z.string().optional().describe('Disambiguates a URL lookup when several people track the same URL — the person\'s name (or numeric id)'),
-    status: statusEnum.optional(),
+    status: statusEnum.optional().describe(STATUS_GUIDE),
     rejection_reason: z.string().optional().describe(`Why the job is "Not Moving Forward" — set it when setting that status. Prefer one of: ${REJECTION_REASONS.join(', ')} — or free text for anything else. Cleared automatically if the status changes to anything else.`),
     missing_skills: z.string().optional().describe('Comma-delimited skills the posting requires that the candidate lacks, e.g. "Kubernetes, Go". Only kept while rejection_reason is "Not Qualified"; cleared automatically otherwise.'),
     proposed_salary: z.number().int().nullable().optional().describe('The minimum annual salary (in dollars) the candidate asked for in their application — offer to record it when setting the status to "Applied". null clears it. Kept when the status later moves on (Interviewing, Offer, …).'),

@@ -8,11 +8,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.JOBTRACKER_DATA_DIR || path.join(__dirname, '..', 'data');
 export const DB_PATH = path.join(DATA_DIR, 'jobtracker.db');
 
-export const STATUSES = ['new', 'Interested', 'Applied', 'Interviewing', 'Offer', 'Not Moving Forward', 'No Longer Available'];
+// Pipeline order (also the UI's sort order). "Not Moving Forward" is the
+// candidate passing on a job; "Rejected" is the employer passing on them;
+// "Withdrew" is the candidate dropping out after applying. "No Response" is an
+// application that has gone quiet.
+export const STATUSES = ['new', 'Interested', 'Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available'];
 
 // Preset reasons for "Not Moving Forward"; a custom free-text reason is also
 // allowed (the UI files it under "Other").
-export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Qualified', 'Low Salary', 'Missing Benefits', 'Not Remote', 'Not Interested in Location', 'Not Interested in Company', 'Other'];
+export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Qualified', 'Low Salary', 'Missing Benefits', 'Not Full-Time / Contract', 'Not Remote', 'Location Restricted', 'Location / Commute', 'Too Much Travel', 'Not Interested in Company', 'Already Applied / Cooldown', 'Not a Job Posting', 'Other'];
+
+// Retired preset names, still accepted from older callers (skills, emails).
+const REJECTION_REASON_ALIASES = { 'not interested in location': 'Location / Commute' };
+
+// Canonicalize a reason against the presets (case-insensitive, plus retired
+// names); anything else is kept as trimmed free text.
+export function normalizeRejectionReason(reason) {
+  const text = String(reason ?? '').trim();
+  const key = text.toLowerCase();
+  return REJECTION_REASONS.find(r => r.toLowerCase() === key) ?? REJECTION_REASON_ALIASES[key] ?? text;
+}
 
 // Skills a "Not Qualified" job asked for that the candidate lacks. Stored as a
 // comma-delimited string; these helpers keep it tidy (trimmed, deduped
@@ -564,6 +579,72 @@ export function normalizeProposedSalary(value) {
   return Math.round(n);
 }
 
+// Migration: status_changed_at — when the job last changed status, so a stale
+// "Applied" can be spotted. Rows that predate it are backfilled with their
+// last update (or creation, for jobs still "new").
+{
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map(c => c.name);
+  if (!cols.includes('status_changed_at')) {
+    db.exec("ALTER TABLE jobs ADD COLUMN status_changed_at TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE jobs SET status_changed_at = CASE WHEN status = 'new' THEN created_at ELSE updated_at END");
+  }
+}
+
+// Migration: the second set of statuses and rejection reasons. Free-text
+// "Other" reasons that a new status or preset now covers are moved onto it,
+// and the retired "Not Interested in Location" becomes "Location / Commute".
+// Text that said more than its new preset is kept in the candidate's note.
+// Runs once (tracked in settings); updated_at and status_changed_at are left
+// alone so the rows keep their history.
+{
+  const done = db.prepare("SELECT 1 FROM settings WHERE key = 'migration.status_options_v2'").get();
+  if (!done) {
+    const jobBoard = { reason: 'Not a Job Posting' };
+    const moves = {
+      'rejected': { status: 'Rejected' },
+      'job was filled': { status: 'No Longer Available' },
+      'this is a job board. not an individual job.': jobBoard,
+      'this is a job board, not an individual job.': jobBoard,
+      'this is a job search board. not an individual job.': jobBoard,
+      'link is to a jobs board not an individual job.': jobBoard,
+      'posting too vague. link is to a job board, not a specific job.': jobBoard,
+      'contract position. require ft w/ benefits.': { reason: 'Not Full-Time / Contract' },
+      'appears to be a contract position.': { reason: 'Not Full-Time / Contract' },
+      'too much travel': { reason: 'Too Much Travel' },
+      'too much travel.': { reason: 'Too Much Travel' },
+      'too long a commute': { reason: 'Location / Commute' },
+      'not interested in location': { reason: 'Location / Commute' },
+      'not available in tn.': { reason: 'Location Restricted', keepNote: true },
+      'must be in pacific or mountain timezone.': { reason: 'Location Restricted', keepNote: true },
+      'already applied for similar job.': { reason: 'Already Applied / Cooldown', keepNote: true },
+      "recently interviewed. can't apply again for 6 months.": { reason: 'Already Applied / Cooldown', keepNote: true },
+      'requires strong python.': { reason: 'Not Qualified', skills: 'Python' },
+      'stack is misaligned': { reason: 'Not Qualified', keepNote: true }
+    };
+    const rows = db.prepare("SELECT id, rejection_reason, missing_skills, user_note FROM jobs WHERE status = 'Not Moving Forward' AND rejection_reason != ''").all();
+    const update = db.prepare('UPDATE jobs SET status = ?, rejection_reason = ?, missing_skills = ?, user_note = ? WHERE id = ?');
+    db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        const move = moves[row.rejection_reason.trim().toLowerCase()];
+        if (!move) continue;
+        const status = move.status ?? 'Not Moving Forward';
+        const reason = move.status ? '' : move.reason;
+        const skills = reason === 'Not Qualified' ? normalizeSkills([row.missing_skills, move.skills].filter(Boolean).join(',')) : '';
+        const note = move.keepNote
+          ? [row.user_note, row.rejection_reason.trim()].filter(Boolean).join('\n')
+          : row.user_note;
+        update.run(status, reason, skills, note, row.id);
+      }
+      db.prepare("INSERT INTO settings (key, value) VALUES ('migration.status_options_v2', ?)").run(new Date().toISOString());
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
+
 function touch(fields) {
   return { ...fields, updated_at: new Date().toISOString() };
 }
@@ -730,8 +811,8 @@ export function isUrlTracked(url) {
 // Each job may carry its own person_id; defaultPersonId covers the rest.
 export function addJobs(jobs, defaultPersonId) {
   const insert = db.prepare(`
-    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills, proposed_salary, application_notes, referred_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (person_id, date_found, title, company, url, category, salary, salary_min, salary_max, salary_confidence, fit, status, note, level, rejection_reason, missing_skills, proposed_salary, application_notes, referred_by, status_changed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(person_id, url) DO NOTHING
   `);
   const results = { added: 0, skipped: 0, jobs: [] };
@@ -741,7 +822,7 @@ export function addJobs(jobs, defaultPersonId) {
       throw new Error(`Unknown person id "${personId}" — every job needs a valid person`);
     }
     const status = STATUSES.includes(job.status) ? job.status : 'new';
-    const reason = status === 'Not Moving Forward' ? (job.rejection_reason || '') : '';
+    const reason = status === 'Not Moving Forward' ? normalizeRejectionReason(job.rejection_reason) : '';
     const level = job.level ? normalizeLevel(job.level) : classifyLevel(job.title);
     // An explicitly supplied range wins; otherwise parse it from the salary string.
     const range = job.salary_min != null || job.salary_max != null
@@ -807,6 +888,11 @@ export function updateJob({ id, url, personId }, fields) {
   // moves (back) to any other status.
   if (fields.status && fields.status !== 'Not Moving Forward') {
     fields = { ...fields, rejection_reason: '' };
+  } else if ('rejection_reason' in fields) {
+    fields = { ...fields, rejection_reason: normalizeRejectionReason(fields.rejection_reason) };
+  }
+  if (fields.status && fields.status !== job.status) {
+    fields = { ...fields, status_changed_at: new Date().toISOString() };
   }
   // Missing skills only make sense for a "Not Qualified" rejection; clear them
   // whenever the job's (resulting) status/reason is anything else.
@@ -827,7 +913,7 @@ export function updateJob({ id, url, personId }, fields) {
   if ('referred_by' in fields) {
     fields = { ...fields, referred_by: String(fields.referred_by ?? '').trim() };
   }
-  const updates = Object.entries(touch(fields)).filter(([k]) => EDITABLE_FIELDS.includes(k) || k === 'updated_at');
+  const updates = Object.entries(touch(fields)).filter(([k]) => EDITABLE_FIELDS.includes(k) || k === 'updated_at' || k === 'status_changed_at');
   if (!updates.length) return job;
   const sql = `UPDATE jobs SET ${updates.map(([k]) => `${k} = ?`).join(', ')} WHERE id = ?`;
   db.prepare(sql).run(...updates.map(([, v]) => v), job.id);
