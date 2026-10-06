@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref, parseNames, parseQuestions, tickerHref } from './constants.js';
 import { researchCompany } from './api.js';
+import { ContactAvatar } from './ContactsPage.jsx';
 
 // One proposed field in the research preview: the researched value next to
 // what is saved now, so the change is visible before it is applied.
@@ -383,6 +384,7 @@ export default function CompanyPage({ company, jobs, contacts = [], personName, 
           <ul className="company-contact-list">
             {contacts.map(c => (
               <li key={c.id}>
+                <ContactAvatar contact={c} size={24} />
                 <strong>{c.name}</strong>
                 {c.title && <span className="hint"> · {c.title}</span>}
                 {c.email && <> · <a href={`mailto:${c.email}`}>{c.email}</a></>}

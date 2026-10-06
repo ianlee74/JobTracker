@@ -539,6 +539,19 @@ db.exec(`
   INSERT OR IGNORE INTO interview_jobs (interview_id, job_id) SELECT id, job_id FROM interviews;
 `);
 
+// Migration: a contact can have a photo (a headshot, often a screenshot of
+// their LinkedIn picture). Kept in its own table so contact lists don't
+// carry the image bytes; contacts expose photo_updated_at instead, which the
+// UI uses to show and cache-bust /api/contacts/:id/photo.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS contact_photos (
+    contact_id INTEGER PRIMARY KEY,
+    mime TEXT NOT NULL,
+    data BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+`);
+
 // proposed_salary is stored as whole dollars or NULL. Accepts a number or a
 // numeric string (with $ and commas); anything else is an error, and an empty
 // value clears it.
@@ -869,9 +882,44 @@ function contactFields(fields) {
 
 // interview_count: how many interviews the contact has attended, so the
 // contacts page can show who the candidate has actually met.
+// photo_updated_at: when the contact's photo was set, or null without one.
+const CONTACT_PHOTO_COLUMN = '(SELECT updated_at FROM contact_photos p WHERE p.contact_id = contacts.id) AS photo_updated_at';
 const CONTACT_SELECT = `SELECT contacts.*,
-  (SELECT COUNT(*) FROM interview_attendees a WHERE a.contact_id = contacts.id) AS interview_count
+  (SELECT COUNT(*) FROM interview_attendees a WHERE a.contact_id = contacts.id) AS interview_count,
+  ${CONTACT_PHOTO_COLUMN}
   FROM contacts`;
+
+// Photos arrive as data: URLs (the UI downscales them first). The decoded
+// image is capped well above what a downscaled headshot needs.
+const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+function parsePhoto(value) {
+  const m = /^data:([\w/+.-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(String(value));
+  if (!m) throw new Error('photo must be a base64 data: URL of an image');
+  const mime = m[1].toLowerCase();
+  if (!PHOTO_TYPES.includes(mime)) throw new Error(`Unsupported photo type "${mime}" — use JPEG, PNG, WebP or GIF`);
+  const data = Buffer.from(m[2], 'base64');
+  if (!data.length) throw new Error('photo is empty');
+  if (data.length > PHOTO_MAX_BYTES) throw new Error('photo is too large (max 5 MB)');
+  return { mime, data };
+}
+
+// photo: a data: URL sets it; null or '' removes it; absent leaves it alone.
+// Validated before the contact row is written so a bad photo saves nothing.
+function setContactPhoto(id, photo) {
+  if (photo) {
+    const { mime, data } = parsePhoto(photo);
+    db.prepare('INSERT OR REPLACE INTO contact_photos (contact_id, mime, data, updated_at) VALUES (?, ?, ?, ?)')
+      .run(id, mime, data, new Date().toISOString());
+  } else {
+    db.prepare('DELETE FROM contact_photos WHERE contact_id = ?').run(id);
+  }
+}
+
+export function getContactPhoto(id) {
+  return db.prepare('SELECT mime, data, updated_at FROM contact_photos WHERE contact_id = ?').get(id) ?? null;
+}
 
 export function listContacts({ company, q } = {}) {
   const where = [];
@@ -907,8 +955,10 @@ export function addContact(fields) {
   if (!values.name) throw new Error('Contact name is required');
   const dupe = db.prepare('SELECT id FROM contacts WHERE name = ? COLLATE NOCASE AND company = ? COLLATE NOCASE').get(values.name, values.company);
   if (dupe) throw new Error(`A contact named "${values.name}"${values.company ? ` at ${values.company}` : ''} already exists`);
+  if (fields.photo) parsePhoto(fields.photo);
   const info = db.prepare('INSERT INTO contacts (name, title, company, email, phone, linkedin, note) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(values.name, values.title, values.company, values.email, values.phone, values.linkedin, values.note);
+  if (fields.photo) setContactPhoto(info.lastInsertRowid, fields.photo);
   return getContact(info.lastInsertRowid);
 }
 
@@ -917,16 +967,20 @@ export function updateContact(id, fields) {
   if (!contact) return null;
   const values = contactFields(fields);
   if ('name' in values && !values.name) throw new Error('Contact name cannot be empty');
+  if (fields.photo) parsePhoto(fields.photo);
   const updates = Object.entries(values);
-  if (!updates.length) return contact;
-  db.prepare(`UPDATE contacts SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
-    .run(...updates.map(([, v]) => v), new Date().toISOString(), id);
+  if (updates.length) {
+    db.prepare(`UPDATE contacts SET ${updates.map(([k]) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+      .run(...updates.map(([, v]) => v), new Date().toISOString(), id);
+  }
+  if ('photo' in fields) setContactPhoto(id, fields.photo);
   return getContact(id);
 }
 
 export function deleteContact(id) {
   if (!getContact(id)) return false;
   db.prepare('DELETE FROM interview_attendees WHERE contact_id = ?').run(id);
+  db.prepare('DELETE FROM contact_photos WHERE contact_id = ?').run(id);
   db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
   return true;
 }
@@ -969,7 +1023,7 @@ function interviewRow(row) {
       SELECT j.*, (SELECT GROUP_CONCAT(kind) FROM job_documents d WHERE d.job_id = j.id) AS doc_kinds
       FROM interview_jobs ij JOIN jobs j ON j.id = ij.job_id
       WHERE ij.interview_id = ? ORDER BY (j.id = ?) DESC, j.title COLLATE NOCASE`).all(row.id, row.job_id),
-    attendees: db.prepare('SELECT c.* FROM interview_attendees a JOIN contacts c ON c.id = a.contact_id WHERE a.interview_id = ? ORDER BY c.name COLLATE NOCASE').all(row.id),
+    attendees: db.prepare(`SELECT contacts.*, ${CONTACT_PHOTO_COLUMN} FROM interview_attendees a JOIN contacts ON contacts.id = a.contact_id WHERE a.interview_id = ? ORDER BY contacts.name COLLATE NOCASE`).all(row.id),
     questions: listInterviewQuestions(row.id)
   };
 }
