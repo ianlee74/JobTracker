@@ -80,9 +80,18 @@ Each person can also carry their own **Job search instructions** (Settings ⚙, 
 
 Tools that need a person (`add_jobs`, `configure_document_generation`, …) take a `person` argument — the person's name. It can be omitted while only one person is tracked. Job posting URLs are unique **per person**, so two people can track the same posting independently; URL-based lookups accept `person` to disambiguate.
 
-Statuses: `new`, `Interested`, `Applied`, `Interviewing`, `Offer`, `Not Moving Forward`, `No Longer Available`.
+Statuses: `new`, `Interested`, `Applied`, `No Response`, `Interviewing`, `Offer`, `Accepted`, `Declined Offer`, `Rejected`, `Withdrew`, `Not Moving Forward`, `No Longer Available`.
 
-`Not Moving Forward` takes a **rejection reason** (`Not Interested`, `Not Qualified`, `Over Qualified`, `Low Salary`, `Missing Benefits`, `Not Remote`, `Not Interested in Location`, `Not Interested in Company`, or free text). A `Not Qualified` reason adds a third prompt for the **missing skills** — a comma-delimited list of what the posting wanted that the candidate lacks (`missing_skills`; e.g. `Kubernetes, Go`). The UI suggests every skill previously entered, and the list is cleared automatically if the status or reason changes to anything else.
+- `Not Moving Forward` — **you** passed on the job (takes a rejection reason, below).
+- `Rejected` — the **employer** turned you down.
+- `Withdrew` — you dropped out after applying or interviewing.
+- `No Response` — an application that has gone quiet. Each job records when its status last changed (`status_changed_at`); an `Applied` job with no change for 21 days shows a one-click "mark No Response?" nudge under its status.
+- `Accepted` / `Declined Offer` close out an `Offer`.
+- `No Longer Available` — the posting closed or was filled.
+
+The closed-out statuses (`Declined Offer`, `Rejected`, `Withdrew`, `Not Moving Forward`, `No Longer Available`) get no summary tile but stay in the status filter.
+
+`Not Moving Forward` takes a **rejection reason** (`Not Interested`, `Not Qualified`, `Over Qualified`, `Low Salary`, `Missing Benefits`, `Not Full-Time / Contract`, `Not Remote`, `Location Restricted` — remote but not open to your state/time zone, `Location / Commute`, `Too Much Travel`, `Not Interested in Company`, `Already Applied / Cooldown`, `Not a Job Posting` — a careers portal, program page, or search results rather than one opening, or free text). Reasons are matched case-insensitively, and the retired `Not Interested in Location` is accepted as `Location / Commute`. The "Other" text box suggests the free-text reasons already used, so the same idea gets the same words. A `Not Qualified` reason adds a third prompt for the **missing skills** — a comma-delimited list of what the posting wanted that the candidate lacks (`missing_skills`; e.g. `Kubernetes, Go`). The UI suggests every skill previously entered, and the list is cleared automatically if the status or reason changes to anything else.
 
 `Applied` prompts for two optional **application details**: the **proposed salary** (`proposed_salary` — the minimum annual salary you specified in the application, if it asked) and **application notes** (`application_notes` — anything about the application process worth remembering later in an interview). In the UI the prompt opens under the status right after the change and collapses to a one-line summary when you click Done; click the summary (or edit the job) to change them later. Unlike the rejection reason, these are **kept** when the status moves on to `Interviewing`, `Offer`, or anything else — that's when they're most useful — and they can be set or cleared through `update_job` at any time.
 

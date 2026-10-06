@@ -1441,6 +1441,21 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
 }
 .interviews-link:hover { text-decoration: underline; }
 
+/* Nudge under an "Applied" status that has gone quiet */
+.stale-applied {
+  display: block;
+  margin-top: 5px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 11px;
+  color: #a16207;
+  cursor: pointer;
+  text-align: left;
+}
+.stale-applied:hover { text-decoration: underline; }
+
 /* ---- Contacts ---- */
 .contact-row { cursor: pointer; }
 .contact-row:hover td { background: rgba(37, 99, 235, 0.04); }

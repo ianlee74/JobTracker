@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJobs, fetchStats, fetchCompanies, fetchMissingSkills, fetchPeople, fetchAiStatus, fetchContacts, fetchJob, addPerson, addJob, updateJob, deleteJob, addCompany, updateCompany, addContact, updateContact, deleteContact, generateDocuments, uploadJobDocument, deleteJobDocuments, signOut } from './api.js';
-import { STATUSES, STATUS_COLORS, LEVELS, parseSkills, parseNames } from './constants.js';
+import { STATUSES, CLOSED_STATUSES, STATUS_COLORS, LEVELS, REJECTION_REASONS, CUSTOM_REASONS_LIST_ID, parseSkills, parseNames } from './constants.js';
 import JobTable from './JobTable.jsx';
 import AddJobPage, { JobForm } from './AddJobForm.jsx';
 import CompanyPage from './CompanyPage.jsx';
@@ -50,7 +50,7 @@ const COMPARATORS = {
 };
 
 // Closed-out statuses stay in the Filters drop-down but get no summary tile at the top of the page.
-const TILE_STATUSES = STATUSES.filter(s => s !== 'Not Moving Forward' && s !== 'No Longer Available');
+const TILE_STATUSES = STATUSES.filter(s => !CLOSED_STATUSES.includes(s));
 
 const FILTERS_STORAGE_KEY = 'jobtracker.viewFilters';
 const PERSON_STORAGE_KEY = 'jobtracker.person';
@@ -372,6 +372,17 @@ export default function App() {
     return parseSkills([...knownSkills, local].join(','))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [knownSkills, jobs]);
+
+  // Free-text "Other" reasons already used, most used first, for the
+  // reason box's suggestions.
+  const customReasons = useMemo(() => {
+    const counts = new Map();
+    for (const j of jobs) {
+      const r = (j.rejection_reason || '').trim();
+      if (j.status === 'Not Moving Forward' && r && !REJECTION_REASONS.includes(r)) counts.set(r, (counts.get(r) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([r]) => r);
+  }, [jobs]);
 
   const flashSaved = () => {
     setSavedFlash(true);
@@ -707,6 +718,9 @@ export default function App() {
 
   return (
     <div className="app">
+      <datalist id={CUSTOM_REASONS_LIST_ID}>
+        {customReasons.map(r => <option key={r} value={r} />)}
+      </datalist>
       <div className="header">
         <div>
           <h1>Job Search Tracker</h1>

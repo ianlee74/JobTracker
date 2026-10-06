@@ -106,7 +106,18 @@ await check('user can record application details', { proposed_salary: 210000, ap
 await check('application details survive a status change', { proposed_salary: 210000, application_notes: 'Asked for fully remote' }, jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Interviewing' }), ...H(aliceCookie) }).then(j => ({ proposed_salary: j.proposed_salary, application_notes: j.application_notes })));
 await check('invalid proposed salary -> 400', 400, status(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ proposed_salary: 'lots' }), ...H(aliceCookie) }));
 await check('proposed salary can be cleared', null, jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ proposed_salary: null }), ...H(aliceCookie) }).then(j => j.proposed_salary));
-await check('skills search hits the job', 1, jsonBody('/api/jobs?q=terraform', H(adminCookie)).then(j => j.length));
+
+// --- statuses and rejection reasons ---
+await check('reason matched to its preset case-insensitively', 'Too Much Travel', jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Not Moving Forward', rejection_reason: ' too much travel ' }), ...H(adminCookie) }).then(j => j.rejection_reason));
+await check('retired reason maps to its replacement', 'Location / Commute', jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ rejection_reason: 'Not Interested in Location' }), ...H(adminCookie) }).then(j => j.rejection_reason));
+await check('free-text reason kept as typed', 'Needs a security clearance', jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ rejection_reason: 'Needs a security clearance ' }), ...H(adminCookie) }).then(j => j.rejection_reason));
+const beforeStatus = db.getJob({ id: defaultJob.id }).status_changed_at;
+await check('a non-status edit keeps status_changed_at', beforeStatus, jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ user_note: 'hello' }), ...H(adminCookie) }).then(j => j.status_changed_at));
+await check('a status change stamps status_changed_at and clears the reason', { changed: true, reason: '' }, jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'Rejected' }), ...H(adminCookie) }).then(j => ({ changed: j.status_changed_at > beforeStatus, reason: j.rejection_reason })));
+await check('new statuses accepted', 'No Response', jsonBody(`/api/jobs/${defaultJob.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'No Response' }), ...H(adminCookie) }).then(j => j.status));
+await check('stats count the new statuses', 1, jsonBody(`/api/stats?person=${defaultPerson.id}`, H(adminCookie)).then(s => s.byStatus['No Response']));
+
+await check('skills search hits the job', 1,jsonBody('/api/jobs?q=terraform', H(adminCookie)).then(j => j.length));
 
 // --- referrals (a job's referred_by feeds its company's referrals list) ---
 await check('user can set referred_by on own job (trimmed)', 'Jane Doe', jsonBody(`/api/jobs/${aliceJob.id}`, { method: 'PATCH', body: JSON.stringify({ referred_by: '  Jane Doe ' }), ...H(aliceCookie) }).then(j => j.referred_by));

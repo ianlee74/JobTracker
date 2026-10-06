@@ -188,6 +188,7 @@ erDiagram
         text salary "raw string as listed"
         int salary_min "parsed annual USD"
         int salary_max "parsed annual USD"
+        text status_changed_at "when the status last changed"
         text rejection_reason "only with Not Moving Forward"
         text missing_skills "comma-delimited; only with Not Qualified"
         int proposed_salary "min asked for in the application; kept across statuses"

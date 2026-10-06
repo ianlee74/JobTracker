@@ -1,6 +1,20 @@
-export const STATUSES = ['new', 'Interested', 'Applied', 'Interviewing', 'Offer', 'Not Moving Forward', 'No Longer Available'];
+export const STATUSES = ['new', 'Interested', 'Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available'];
 
-export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Qualified', 'Low Salary', 'Missing Benefits', 'Not Remote', 'Not Interested in Location', 'Not Interested in Company', 'Other'];
+// Statuses that end a job's pipeline without it going anywhere.
+export const CLOSED_STATUSES = ['Declined Offer', 'Rejected', 'Withdrew', 'Not Moving Forward', 'No Longer Available'];
+
+// Statuses at or past "Applied" — the application details belong to these.
+export const APPLIED_STATUSES = ['Applied', 'No Response', 'Interviewing', 'Offer', 'Accepted', 'Declined Offer', 'Rejected', 'Withdrew'];
+
+// An "Applied" job with no status change for this long is flagged as a
+// likely "No Response".
+export const STALE_APPLIED_DAYS = 21;
+
+export const REJECTION_REASONS = ['Not Interested', 'Not Qualified', 'Over Qualified', 'Low Salary', 'Missing Benefits', 'Not Full-Time / Contract', 'Not Remote', 'Location Restricted', 'Location / Commute', 'Too Much Travel', 'Not Interested in Company', 'Already Applied / Cooldown', 'Not a Job Posting', 'Other'];
+
+// The <datalist> of free-text reasons already used, rendered once by App and
+// offered on every "Other" reason box so the same idea gets the same words.
+export const CUSTOM_REASONS_LIST_ID = 'custom-rejection-reasons';
 
 // Missing skills for a "Not Qualified" rejection are stored comma-delimited;
 // parse trims, drops blanks and dedupes case-insensitively (first casing wins).
@@ -83,8 +97,13 @@ export const STATUS_COLORS = {
   'new': '#6b7280',
   'Interested': '#2563eb',
   'Applied': '#7c3aed',
+  'No Response': '#a16207',
   'Interviewing': '#d97706',
   'Offer': '#16a34a',
+  'Accepted': '#15803d',
+  'Declined Offer': '#64748b',
+  'Rejected': '#db2777',
+  'Withdrew': '#78716c',
   'Not Moving Forward': '#9ca3af',
   'No Longer Available': '#b91c1c'
 };
