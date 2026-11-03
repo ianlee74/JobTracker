@@ -1,9 +1,10 @@
-import { getCompany, listJobs, listCompanies, addCompany, upsertCompany, addCompanyInterviewQuestions, parseQuestions, normalizeTicker, COMPANY_TYPES, EMPLOYEE_COUNTS, LEVELS } from './db.js';
+import { getCompany, listJobs, listCompanies, addCompany, upsertCompany, addCompanyInterviewQuestions, addCompanyJobBoards, parseQuestions, parseJobBoards, normalizeTicker, COMPANY_TYPES, EMPLOYEE_COUNTS, LEVELS } from './db.js';
 import { generateDocument, loadSkill, postingContext } from './generate.js';
 
 // Company research via the Anthropic API: Claude searches the web for the
 // company and returns values for the tracker's company fields (website, type,
-// employee count, ticker, gross revenue), interview questions to ask it, and
+// employee count, ticker, gross revenue), interview questions to ask it, the
+// job boards that list its openings, and
 // a short briefing for the notes. What to look for and how to report it is
 // the `research-company` skill (skills/research-company/SKILL.md), whose body
 // is the system prompt and whose frontmatter picks the model. The result is a
@@ -58,6 +59,7 @@ function parseResearch(text) {
     confidence: ['high', 'medium', 'low'].includes(str(parsed.confidence)) ? str(parsed.confidence) : 'medium',
     summary: str(parsed.summary),
     interview_questions: parseQuestions(Array.isArray(parsed.interview_questions) ? parsed.interview_questions.map(str) : str(parsed.interview_questions)),
+    job_boards: parseJobBoards(Array.isArray(parsed.job_boards) ? parsed.job_boards.map(str) : str(parsed.job_boards)),
     sources: Array.isArray(parsed.sources) ? parsed.sources.map(str).filter(s => /^https?:\/\//i.test(s)).slice(0, 6) : []
   };
 }
@@ -80,8 +82,8 @@ export function researchNoteSection(research) {
 
 // Fills the company's fields from a research result: the researched fields
 // take the researched values (blank research values leave the field alone),
-// the interview questions are added to the company's list, and the briefing
-// is appended to the notes.
+// the interview questions and job boards are added to the company's lists,
+// and the briefing is appended to the notes.
 export function applyResearch(name, research) {
   const company = getCompany(name);
   const fields = {};
@@ -91,6 +93,7 @@ export function applyResearch(name, research) {
   const section = researchNoteSection(research);
   fields.note = company.note ? `${company.note}\n\n${section}` : section;
   upsertCompany(name, fields);
+  addCompanyJobBoards(name, research.job_boards);
   return addCompanyInterviewQuestions(name, research.interview_questions);
 }
 
@@ -118,6 +121,11 @@ export async function researchCompany(name, { apply = false } = {}) {
   const existingQuestions = parseQuestions(company.interview_questions);
   if (existingQuestions.length) {
     lines.push('', 'Interview questions already on file (propose different ones):', ...existingQuestions.map(q => `- ${q}`));
+  }
+
+  const existingBoards = parseJobBoards(company.job_boards);
+  if (existingBoards.length) {
+    lines.push('', 'Job boards already on file (propose only ones not listed):', ...existingBoards.map(u => `- ${u}`));
   }
 
   const skill = await loadResearchSkill();

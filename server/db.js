@@ -77,6 +77,77 @@ export function normalizeQuestions(value) {
   return parseQuestions(value).join('\n');
 }
 
+// Job boards (companies.job_boards) are the places a company's openings are
+// listed, filtered to that company — its careers site, its Greenhouse/Lever/
+// Ashby/Workday board, a LinkedIn or Indeed search for its name — stored one
+// URL per line. Never individual postings: those are jobs, and a link to one
+// goes stale when the req closes. Accepts an array or newline-delimited text;
+// keeps only http(s) URLs, drops anything that looks like a single posting,
+// strips job-selection parameters from search URLs, and dedupes (ignoring
+// the host's case and a trailing slash).
+const POSTING_PARAMS = ['currentJobId', 'gh_jid', 'jk', 'vjk'];
+
+export function isJobPostingUrl(value) {
+  let u;
+  try { u = new URL(String(value)); } catch { return false; }
+  const host = u.hostname.toLowerCase();
+  const path = u.pathname.toLowerCase();
+  if (host.endsWith('linkedin.com')) return /^\/jobs\/view\//.test(path);
+  if (host.endsWith('indeed.com')) return /^\/(viewjob|rc\/clk|pagead)/.test(path);
+  if (host.endsWith('greenhouse.io')) return /\/jobs\/\d+/.test(path);
+  if (host.endsWith('lever.co') || host.endsWith('ashbyhq.com')) return /^\/[^/]+\/[0-9a-f-]{20,}/.test(path);
+  if (host.endsWith('smartrecruiters.com')) return /^\/[^/]+\/\d+/.test(path);
+  if (host.endsWith('myworkdayjobs.com')) return /\/job\//.test(path);
+  // Anything else: a /job/<slug> page or a /jobs/<numeric id> page.
+  return /\/job\/[^/]+/.test(path) || /\/jobs?\/(?:[^/]+\/)?\d{4,}(?:[/-]|$)/.test(path);
+}
+
+export function parseJobBoards(value) {
+  const lines = Array.isArray(value) ? value : String(value || '').split(/\r?\n/);
+  const seen = new Set();
+  const out = [];
+  for (const raw of lines) {
+    const text = String(raw ?? '').trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim();
+    let u;
+    try { u = new URL(text); } catch { continue; }
+    if (!/^https?:$/.test(u.protocol) || isJobPostingUrl(u.href)) continue;
+    // Deleting re-encodes the query ("%20" → "+"), so only when needed.
+    for (const p of POSTING_PARAMS) if (u.searchParams.has(p)) u.searchParams.delete(p);
+    const key = `${u.host.toLowerCase()}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(u.href);
+  }
+  return out;
+}
+
+export function normalizeJobBoards(value) {
+  return parseJobBoards(value).join('\n');
+}
+
+// The company-filtered board a posting URL came from, when its ATS is
+// recognizable (a Greenhouse/Lever/Ashby/SmartRecruiters board, a Workday
+// site, or a LinkedIn search for the company's name); null otherwise.
+export function jobBoardFromPostingUrl(value, company) {
+  let u;
+  try { u = new URL(String(value)); } catch { return null; }
+  const host = u.hostname.toLowerCase();
+  const [first, second] = u.pathname.split('/').filter(Boolean);
+  if (/(^|\.)greenhouse\.io$/.test(host) && first && first !== 'embed') return `https://job-boards.greenhouse.io/${first}`;
+  if (host === 'jobs.lever.co' && first) return `https://jobs.lever.co/${first}`;
+  if (host === 'jobs.ashbyhq.com' && first) return `https://jobs.ashbyhq.com/${first}`;
+  if (host === 'jobs.smartrecruiters.com' && first) return `https://jobs.smartrecruiters.com/${first}`;
+  if (host.endsWith('myworkdayjobs.com') && first) {
+    // https://tenant.wd5.myworkdayjobs.com/[en-US/]Site/job/...
+    const site = /^[a-z]{2}-[a-z]{2}$/i.test(first) ? second : first;
+    if (site && site !== 'job') return `${u.origin}/${site}`;
+  }
+  if (host.endsWith('linkedin.com') && /^\/jobs\//.test(u.pathname) && company) {
+    return `https://www.linkedin.com/jobs/search-results/?keywords=${encodeURIComponent(company)}`;
+  }
+  return null;
+}
+
 // Stock ticker symbols are stored upper-case without exchange prefixes or
 // decoration ("nasdaq: msft" → "MSFT"); anything that isn't a plausible symbol
 // is dropped rather than saved.
@@ -450,6 +521,29 @@ if (!db.prepare('SELECT 1 FROM people LIMIT 1').get()) {
   }
   if (!cols.includes('interview_questions')) {
     db.exec("ALTER TABLE companies ADD COLUMN interview_questions TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+// Migration: job_boards — newline-delimited URLs of the sites listing the
+// company's openings, filtered to the company (see parseJobBoards). Added to
+// by hand, by company research, by job-search runs, and automatically when a
+// job is added from a recognizable ATS board.
+{
+  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  if (!cols.includes('job_boards')) {
+    db.exec("ALTER TABLE companies ADD COLUMN job_boards TEXT NOT NULL DEFAULT ''");
+    // Backfill from the postings already tracked.
+    const boards = new Map();
+    for (const { company, url } of db.prepare('SELECT company, url FROM jobs ORDER BY id').all()) {
+      const board = jobBoardFromPostingUrl(url, company);
+      if (board) boards.set(company, [...(boards.get(company) || []), board]);
+    }
+    const insert = db.prepare('INSERT OR IGNORE INTO companies (name) VALUES (?)');
+    const update = db.prepare('UPDATE companies SET job_boards = ? WHERE name = ?');
+    for (const [company, urls] of boards) {
+      insert.run(company);
+      update.run(normalizeJobBoards(urls), company);
+    }
   }
 }
 
@@ -876,6 +970,9 @@ export function addJobs(jobs, defaultPersonId, { skipPreviouslyRejected = false 
     if (info.changes > 0) {
       results.added++;
       if (referredBy) addCompanyReferrals(job.company, [referredBy]);
+      // The board the posting came from goes on the company's job-board list.
+      const board = jobBoardFromPostingUrl(job.url, job.company);
+      if (board) addCompanyJobBoards(job.company, [board]);
       results.jobs.push(getJob({ id: info.lastInsertRowid }));
     } else {
       results.skipped++;
@@ -1297,7 +1394,7 @@ export function reorderInterviewQuestions(interviewId, ids) {
 
 // The shape of a company with no saved row yet: every profile field blank and,
 // for whichever person is asking, neither flag set.
-const COMPANY_DEFAULTS = { website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0, favorite: 0 };
+const COMPANY_DEFAULTS = { website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', job_boards: '', referrals: '', not_interested: 0, favorite: 0 };
 
 // The per-person flags (favorite, not_interested); everything else on a
 // company is its shared profile.
@@ -1337,7 +1434,7 @@ export function getCompany(name, { personId } = {}) {
   return { name, ...COMPANY_DEFAULTS, ...(row || {}), ...(flags || {}), job_count: count.n };
 }
 
-const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'ticker', 'gross_revenue', 'interview_questions', 'referrals'];
+const COMPANY_FIELDS = ['website', 'note', 'company_type', 'employee_count', 'ticker', 'gross_revenue', 'interview_questions', 'job_boards', 'referrals'];
 
 // Canonicalize a caller-supplied value against a preset list (case-insensitive);
 // values that don't match any preset are kept as given.
@@ -1367,6 +1464,8 @@ export function upsertCompany(name, fields, { personId } = {}) {
   if ('gross_revenue' in fields) fields = { ...fields, gross_revenue: String(fields.gross_revenue ?? '').trim() };
   // interview_questions: an array or newline-delimited text; stored one per line.
   if ('interview_questions' in fields) fields = { ...fields, interview_questions: normalizeQuestions(fields.interview_questions) };
+  // job_boards: an array or newline-delimited text; stored one URL per line.
+  if ('job_boards' in fields) fields = { ...fields, job_boards: normalizeJobBoards(fields.job_boards) };
   const updates = Object.entries(fields).filter(([k]) => COMPANY_FIELDS.includes(k));
   if (!db.prepare('SELECT 1 FROM companies WHERE name = ?').get(name)) {
     db.prepare('INSERT INTO companies (name) VALUES (?)').run(name);
@@ -1424,6 +1523,15 @@ export function addCompanyInterviewQuestions(name, questions) {
   const current = getCompany(name).interview_questions;
   const merged = normalizeQuestions([...parseQuestions(current), ...parseQuestions(questions)]);
   return merged === current ? getCompany(name) : upsertCompany(name, { interview_questions: merged });
+}
+
+// Appends job boards to a company's list (deduped, existing order kept;
+// individual postings are dropped — see parseJobBoards). Used by research,
+// job-search runs, and addJobs.
+export function addCompanyJobBoards(name, urls) {
+  const current = getCompany(name).job_boards;
+  const merged = normalizeJobBoards([...parseJobBoards(current), ...parseJobBoards(urls)]);
+  return merged === current ? getCompany(name) : upsertCompany(name, { job_boards: merged });
 }
 
 // Creates a company that has no saved row and no tracked jobs yet, so it can

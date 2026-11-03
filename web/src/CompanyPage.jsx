@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobHref, parseNames, parseQuestions, tickerHref } from './constants.js';
+import { COMPANY_TYPES, EMPLOYEE_COUNTS, STATUS_COLORS, formatSalaryRange, jobBoardLabel, jobHref, parseJobBoards, parseNames, parseQuestions, tickerHref } from './constants.js';
 import { researchCompany } from './api.js';
 import { ContactAvatar } from './ContactsPage.jsx';
 
@@ -26,6 +26,72 @@ function mergeQuestions(existing, proposed) {
   const seen = new Set(parseQuestions(existing).map(q => q.toLowerCase()));
   const extra = (proposed || []).filter(q => q && !seen.has(q.toLowerCase()));
   return [...parseQuestions(existing), ...extra].join('\n');
+}
+
+// The sites listing the company's openings, filtered to the company (stored
+// one URL per line). Each opens in a new tab; admins can add and remove them.
+// The server drops individual-posting URLs and duplicates, so an add that
+// comes back without a new entry is reported rather than silently lost.
+function JobBoards({ company, onSave, editable }) {
+  const boards = parseJobBoards(company.job_boards);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState(null);
+
+  useEffect(() => { setDraft(''); setError(null); }, [company.name]);
+
+  const add = async () => {
+    const url = draft.trim();
+    if (!url) return;
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      setError('Enter a full URL starting with https://');
+      return;
+    }
+    const updated = await onSave({ job_boards: [...boards, url].join('\n') });
+    if (!updated) return; // the save failed; the app shows why
+    if (parseJobBoards(updated.job_boards).length > boards.length) {
+      setDraft('');
+    } else {
+      setError('Not added — it is already listed, or it looks like a single job posting. Add the company\'s job board or a job search filtered to the company instead.');
+    }
+  };
+
+  const remove = (url) => {
+    setError(null);
+    onSave({ job_boards: boards.filter(b => b !== url).join('\n') });
+  };
+
+  if (!editable && boards.length === 0) return null;
+  return (
+    <div className="job-boards">
+      <span className="job-boards-title">Job Boards</span>
+      {boards.length > 0 ? (
+        <ul className="job-boards-list">
+          {boards.map(url => (
+            <li key={url}>
+              <a href={url} target="_blank" rel="noopener noreferrer" title={url}>{jobBoardLabel(url)} ↗</a>
+              {editable && (
+                <button className="job-board-remove" onClick={() => remove(url)} title="Remove this job board" aria-label={`Remove ${url}`}>×</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="hint">None yet — job searches and ✨ Research add the boards they find.</span>
+      )}
+      {editable && (
+        <div className="job-board-add">
+          <input
+            value={draft}
+            onChange={e => { setDraft(e.target.value); setError(null); }}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+            placeholder="https://www.linkedin.com/jobs/search-results/?keywords=Company — a board filtered to this company, not a single posting"
+          />
+          <button className="clear-btn" onClick={add} disabled={!draft.trim()}>Add</button>
+        </div>
+      )}
+      {error && <span className="job-board-error">{error}</span>}
+    </div>
+  );
 }
 
 // The result of "Research with Claude": proposed profile fields (website,
@@ -61,6 +127,16 @@ function ResearchPreview({ research, onApply, onDiscard }) {
           </ol>
         </div>
       )}
+      {research.job_boards?.length > 0 && (
+        <div className="research-questions">
+          <div className="research-field-label">Job boards to add</div>
+          <ul>
+            {research.job_boards.map(url => (
+              <li key={url}><a href={url} target="_blank" rel="noopener noreferrer">{jobBoardLabel(url)} ↗</a></li>
+            ))}
+          </ul>
+        </div>
+      )}
       {research.sources.length > 0 && (
         <div className="research-sources">
           Sources:{' '}
@@ -72,7 +148,7 @@ function ResearchPreview({ research, onApply, onDiscard }) {
       <div className="research-actions">
         <button className="primary-btn" onClick={onApply}>Apply to fields</button>
         <button className="clear-btn" onClick={onDiscard}>Discard</button>
-        <span className="hint">Apply sets the fields above, adds the questions to Interview Questions, and appends the briefing to Notes.</span>
+        <span className="hint">Apply sets the fields above, adds the questions to Interview Questions and the boards to Job Boards, and appends the briefing to Notes.</span>
       </div>
     </div>
   );
@@ -90,8 +166,8 @@ function PresetSelect({ value, options, placeholder, onChange }) {
   );
 }
 
-// Info page for one company: website, ticker symbol, gross revenue, free-form
-// notes, interview questions, referrals (who has referred the candidate to
+// Info page for one company: website, job boards, ticker symbol, gross
+// revenue, free-form notes, interview questions, referrals (who has referred the candidate to
 // its jobs), the favorite star and "Not Interested" flag (both the selected
 // person's — `personName` — not the company's; the server clears one when
 // the other is set, and the returned company reflects that), and the tracked
@@ -155,6 +231,7 @@ export default function CompanyPage({ company, jobs, contacts = [], personName, 
     clearTimeout(questionsTimer.current);
     fields.note = note ? `${note}\n\n${research.note_section}` : research.note_section;
     fields.interview_questions = mergeQuestions(questions, research.interview_questions);
+    fields.job_boards = mergeQuestions(company.job_boards, research.job_boards);
     if (fields.website) setWebsite(fields.website);
     if (fields.ticker) setTicker(fields.ticker);
     if (fields.gross_revenue) setGrossRevenue(fields.gross_revenue);
@@ -284,6 +361,7 @@ export default function CompanyPage({ company, jobs, contacts = [], personName, 
                 placeholder="https://..."
               />
             </label>
+            <JobBoards company={company} onSave={onSave} editable />
             <div className="company-fields-row">
               <label>
                 <span className="company-field-title">
@@ -364,6 +442,7 @@ export default function CompanyPage({ company, jobs, contacts = [], personName, 
             {company.website && (
               <div><strong>Website:</strong> <a href={company.website} target="_blank" rel="noopener noreferrer">{company.website}</a></div>
             )}
+            <JobBoards company={company} onSave={onSave} editable={false} />
             {company.referrals && <div><strong>Referrals:</strong> {company.referrals}</div>}
             {company.note && <div className="note-readonly">{company.note}</div>}
             {company.interview_questions && (

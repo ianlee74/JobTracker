@@ -39,6 +39,7 @@ From the data:
 - **Duplicate jobs:** ignore them as a signal either way — they're second copies of jobs already tracked. Their URLs still count as tracked.
 - **`not_interested: true` companies:** never search for, verify, or add jobs from these, even if a posting looks like a perfect fit. (Both company flags are per person — `list_companies` reports the flags of the `person` you pass, so always pass it.)
 - **`favorite: true` companies:** give their careers pages an extra look, even outside the category priorities.
+- **`job_boards`:** each company's list of the sites that list its openings, filtered to that company. Start a company's search from these instead of rediscovering them.
 - **Dedupe lists:** build a list of already-tracked company names, and already-tracked URLs for any company you'll search deeply. `add_jobs` skips exact URL duplicates automatically, so this is about not wasting search effort re-finding the same req, not correctness.
 - **Previously rejected titles:** build a list of company + job title pairs the person has marked Not Moving Forward (whatever the `rejection_reason`). The same role is often reposted under a new URL; treat a posting with the same title at the same company as a duplicate and drop it, rather than resurfacing it. `add_jobs` also skips these server-side (ignoring case and punctuation) and lists them in `skipped_previously_rejected`, but filtering during search saves the verification effort. A genuinely different title at that company is fine.
 
@@ -48,10 +49,12 @@ Using web search and fetch, find CURRENT, LIVE, OPEN postings across the person 
 
 **Verify every candidate on the employer's own ATS page** (Greenhouse/Lever/Ashby/Workday/company careers site) — not a search snippet or aggregator. LinkedIn/Indeed listings go stale fast; open the real page to confirm the req is still live. **Every logged URL must be one specific opening** — never a careers portal, a hiring-program landing page (e.g. "Autism at Work"), a "search results" page, or a "job openings at X" listing, even when the program itself is a great fit. Open the program's portal, find an individual live req, and log that; if no specific req qualifies, mention the program in the Step 4 summary instead of logging it. For each candidate, check every hard requirement from the person skill. When a posting is silent on something that matters (salary, employment type, benefits eligibility, remote eligibility), record that it needs verification rather than assuming it qualifies — use `salary_confidence: "flag"` for undisclosed-but-plausible salaries, and put other open questions in the `fit`/note text.
 
+**Note the job boards as you go.** For each company you search, keep the URLs of the company-filtered boards that list its openings: its careers/job-search page, its ATS board (`https://job-boards.greenhouse.io/<company>`, `https://jobs.lever.co/<company>`, `https://jobs.ashbyhq.com/<company>`, its Workday site), and LinkedIn or Indeed searches for its name (`https://www.linkedin.com/jobs/search-results/?keywords=The%20Home%20Depot`). These are saved in Step 3. A board is never an individual posting, and never an unfiltered search across every employer.
+
 **Parallelize with subagents (if available), but keep them read-only.** Splitting the search by category or target company into parallel subagents finds more and verifies faster. When you do:
 - Give each agent the Step 0 signal relevant to its slice (positive/negative patterns, favorite companies), the hard requirements, the already-tracked company list, the previously rejected company + title list, and the already-tracked URL list for any company it will search deeply.
 - **Tell each agent explicitly to report findings back as text only and NOT to call any jobtracker write tool** (`add_jobs`, `update_job`, `update_company`, `delete_job`), even if it has access. A subagent that writes on its own bypasses Step 2 curation and can leave weak or duplicate entries in the tracker — and delete/undo on a live tracker isn't guaranteed, so prevention beats cleanup. All writes happen in Step 3 from the orchestrating turn.
-- Ask each agent to report, per candidate: title, company, exact URL, salary/range + confidence, location/remote note, employment type + benefits note, and a one-line fit rationale — plus which candidates it checked and excluded (closed, wrong location, part-time, stack mismatch, etc.) so you can see it verified rather than padded.
+- Ask each agent to report, per candidate: title, company, exact URL, salary/range + confidence, location/remote note, employment type + benefits note, and a one-line fit rationale — plus the company-filtered job boards it searched per company, and which candidates it checked and excluded (closed, wrong location, part-time, stack mismatch, etc.) so you can see it verified rather than padded.
 
 Make a genuine effort to include at least one posting from a company not yet in the tracker. Be honest when only a few strong matches exist that day rather than padding with weak fits.
 
@@ -72,11 +75,14 @@ A posting that fails a hard requirement is never logged, no matter how good the 
 - `ticker` — the stock symbol if the company itself is publicly traded (no exchange prefix); omit for private companies.
 - `gross_revenue` — the most recent annual gross revenue as short text with the period (`$245.1B (FY2024)`; mark estimates), or omit if unknown.
 - `add_interview_questions` — 5–8 questions the person should ask this company in an interview, each grounded in something you found.
+- `add_job_boards` — the company-filtered job boards you found for it.
 - `note` — one or two sentences: what the company does, public/private if relevant, and anything relevant to this person (from the person skill's report extras or profile, e.g. an existing connection or a hiring program). If sources disagree on headcount, make a best estimate and add a one-line caveat that it's an estimate. Use `append_note` instead of `note` when the company already has notes.
 
 Time is short on a search run, so a couple of searches per company is enough — the full briefing can come later from the company page's ✨ Research button or the `research_company` tool.
 
 Do this for every new company, including household names — the size bucket and note still need saving. If a company already has this data from a previous run, don't redo it unless something material changed.
+
+**Job boards.** For every company you searched this run — logged jobs or not, new or already profiled — call `update_company` with `add_job_boards` set to the company-filtered boards from Step 1 (fold it into the research call above when there is one). It appends and skips duplicates, so pass every board you used; individual posting URLs are dropped. `add_jobs` also adds the board of each logged posting's ATS (Greenhouse, Lever, Ashby, Workday, LinkedIn) on its own.
 
 ## Step 4 - Looks for jobs no longer listed
 
