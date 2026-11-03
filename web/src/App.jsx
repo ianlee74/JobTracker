@@ -555,6 +555,7 @@ export default function App() {
           : [...prev, updated]
       );
       flashSaved();
+      return updated;
     } catch (err) {
       setError(err.message);
     }
@@ -865,7 +866,7 @@ export default function App() {
         <CompanyPage
           company={
             companies.find(c => c.name === activeCompany)
-            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', not_interested: 0, favorite: 0 }
+            || { name: activeCompany, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', job_boards: '', referrals: '', not_interested: 0, favorite: 0 }
           }
           jobs={jobs.filter(j => j.company === activeCompany)}
           contacts={contacts.filter(c => c.company.toLowerCase() === activeCompany.toLowerCase())}

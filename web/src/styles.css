@@ -1507,3 +1507,17 @@ tr:hover .referral-summary.referral-empty, .referral-summary.referral-empty:focu
 .contact-photo-empty { display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--text-muted); font-size: 12px; }
 .contact-photo-actions { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .contact-photo-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Job boards on the company page: company-filtered sites listing its openings. */
+.job-boards { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.job-boards-title { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.company-fields-readonly .job-boards-title { font-size: 14px; color: var(--text); }
+.job-boards-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.job-boards-list li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.job-boards-list a { color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-boards-list a:hover { text-decoration: underline; }
+.job-board-remove { border: none; background: none; color: var(--text-muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; }
+.job-board-remove:hover { color: #dc2626; }
+.job-board-add { display: flex; gap: 6px; }
+.job-board-add input { flex: 1; min-width: 0; }
+.job-board-error { font-size: 12px; color: #dc2626; }

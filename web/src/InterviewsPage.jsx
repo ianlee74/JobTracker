@@ -693,7 +693,7 @@ export default function InterviewsPage({ jobId, jobs = [], contacts, companies, 
   const companyFor = (name) => (!data ? null
     : name === data.company.name ? data.company
     : companies.find(c => c.name === name)
-      || { name, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', referrals: '', favorite: 0 });
+      || { name, website: '', note: '', company_type: '', employee_count: '', ticker: '', gross_revenue: '', interview_questions: '', job_boards: '', referrals: '', favorite: 0 });
 
   const replace = (updated) => {
     setData(d => ({ ...d, interviews: d.interviews.map(i => (i.id === updated.id ? updated : i)) }));

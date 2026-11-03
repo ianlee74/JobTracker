@@ -49,6 +49,24 @@ export function parseQuestions(text) {
   return String(text || '').split(/\r?\n/).map(q => q.trim()).filter(Boolean);
 }
 
+// A company's job boards are stored one URL per line, like its questions.
+export const parseJobBoards = parseQuestions;
+
+// A short name for a job-board URL: the site, plus the search terms when the
+// URL is a search ("linkedin.com · The Home Depot").
+export function jobBoardLabel(url) {
+  try {
+    const u = new URL(url);
+    const site = u.hostname.replace(/^www\./, '');
+    const terms = u.searchParams.get('keywords') || u.searchParams.get('q') || u.searchParams.get('company');
+    if (terms) return `${site} · ${terms}`;
+    const path = decodeURIComponent(u.pathname).replace(/\/+$/, '');
+    return path ? `${site}${path}` : site;
+  } catch {
+    return url;
+  }
+}
+
 // Fidelity's research dashboard for a stock ticker symbol.
 export function tickerHref(ticker) {
   return `https://digital.fidelity.com/prgw/digital/research/quote/dashboard/summary?symbol=${encodeURIComponent(ticker)}`;

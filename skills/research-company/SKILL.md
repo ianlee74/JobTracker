@@ -1,6 +1,6 @@
 ---
 name: research-company
-description: Research an employer for a job seeker's JobTracker company profile — website, company type, employee count, stock ticker, gross revenue, headquarters, founding year, a short briefing with sources, and interview questions to ask them. Used by JobTracker's server for the "Research with Claude" button, the research_company MCP tool, and POST /api/company/research; also the procedure to follow when researching a company yourself before calling update_company. Edit this file to change what research looks for and how it is written.
+description: Research an employer for a job seeker's JobTracker company profile — website, company type, employee count, stock ticker, gross revenue, headquarters, founding year, the job boards listing its openings, a short briefing with sources, and interview questions to ask them. Used by JobTracker's server for the "Research with Claude" button, the research_company MCP tool, and POST /api/company/research; also the procedure to follow when researching a company yourself before calling update_company. Edit this file to change what research looks for and how it is written.
 model: claude-opus-5
 ---
 
@@ -27,6 +27,7 @@ You research employers for a job seeker's personal job tracker. Given a company 
 - **Confidence** — `high`, `medium`, or `low`: how sure you are that you identified the right company.
 - **Summary** — 120–250 words of plain text (paragraphs separated by blank lines, no Markdown) covering: what the company does, its products and customers; size, ownership (public, private, VC-backed, subsidiary of whom) and funding or revenue if known; the engineering organization and technology signals; its reputation as an employer (employee reviews, remote-work stance, growth, layoffs or other notable news from the last year); and anything a candidate should know before applying or interviewing.
 - **Interview questions** — 5 to 8 specific questions the candidate should ask *this* company in an interview. Ground each one in something you found (a product bet, a reorganization, an acquisition, a public metric, a review theme, the technology stack) rather than generic questions that fit any employer. Phrase them as the candidate would say them aloud.
+- **Job boards** — the places this company's openings are listed, each URL filtered to *this company*: its own careers/job-search page, its ATS board (`https://job-boards.greenhouse.io/<company>`, `https://jobs.lever.co/<company>`, `https://jobs.ashbyhq.com/<company>`, its Workday site), and a LinkedIn job search for its name (`https://www.linkedin.com/jobs/search-results/?keywords=<URL-encoded company name>`, e.g. `?keywords=The%20Home%20Depot`). Include only boards you confirmed exist (the LinkedIn search always qualifies). **Never list an individual job posting** — no `/jobs/view/…`, `/job/<id>`, or other single-req URL, and no unfiltered board of every employer's jobs.
 - **Sources** — up to 6 URLs you actually consulted.
 
 ## Output
@@ -43,10 +44,11 @@ Reply with ONLY a JSON object — no Markdown fences, no prose before or after i
 - `"confidence"`: `"high"`, `"medium"`, or `"low"`.
 - `"summary"`: the briefing text.
 - `"interview_questions"`: an array of question strings.
+- `"job_boards"`: an array of company-filtered job-board URLs.
 - `"sources"`: an array of URLs.
 
 ## Saving the result in JobTracker
 
-When JobTracker's server runs this skill, it turns the JSON into a proposal: the UI shows it next to the company's current values and applies it on confirmation; the `research_company` MCP tool and `POST /api/company/research` apply it only when asked (`apply: true`). Applying sets `website`, `company_type`, `employee_count`, `ticker`, and `gross_revenue` from any non-empty values, appends the interview questions to the company's list (duplicates skipped), and appends the dated briefing — headquarters, founding year, summary, sources — to the company notes.
+When JobTracker's server runs this skill, it turns the JSON into a proposal: the UI shows it next to the company's current values and applies it on confirmation; the `research_company` MCP tool and `POST /api/company/research` apply it only when asked (`apply: true`). Applying sets `website`, `company_type`, `employee_count`, `ticker`, and `gross_revenue` from any non-empty values, appends the interview questions and job boards to the company's lists (duplicates and individual-posting URLs skipped), and appends the dated briefing — headquarters, founding year, summary, sources — to the company notes.
 
-If you are researching a company yourself (Claude Code, Cowork, or Claude Desktop with the JobTracker MCP server) rather than through the server, follow the same procedure and save it with `update_company`: pass `website`, `company_type`, `employee_count`, `ticker`, `gross_revenue`, and `add_interview_questions`, and put the briefing in `append_note` so it is added to the notes instead of replacing them.
+If you are researching a company yourself (Claude Code, Cowork, or Claude Desktop with the JobTracker MCP server) rather than through the server, follow the same procedure and save it with `update_company`: pass `website`, `company_type`, `employee_count`, `ticker`, `gross_revenue`, `add_interview_questions`, and `add_job_boards`, and put the briefing in `append_note` so it is added to the notes instead of replacing them.
